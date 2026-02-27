@@ -1,0 +1,6 @@
+name: whoami
+namespace: qa
+image: traefik/whoami:v1.10.3
+port: 8080
+containerPort: 80
+replicas: 1
