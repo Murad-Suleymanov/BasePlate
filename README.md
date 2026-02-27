@@ -1,13 +1,29 @@
 # Easy-Deploy (MVP)
 
-Developer sadə YAML yazır və Git-ə commit edir → ArgoCD `ApplicationSet` həmin YAML-ları tapıb `BirService` CR deploy edir → operator `BirService`-i reconcile edib `Deployment` + `Service` yaradır.
+Easy-Deploy lets developers define a service in a **simple YAML file**, commit it to Git, and let Kubernetes reconcile it automatically.
 
-## Repo strukturu (tenant izolasiya)
+## How it works
 
-- `tenants/<tenant>/simple-yaml/<service>.yaml` (developer yazır)
-- ArgoCD ilə əsasən yalnız `simple-yaml/` saxlayırsınız; `cr/` qovluğu istəsəniz lokal/debug üçün qala bilər.
+1) Developer commits a file like `tenants/<tenant>/simple-yaml/<service>.yaml`
+2) Argo CD `ApplicationSet` discovers those files and renders a `BirService` Custom Resource using a Helm chart
+3) The Easy-Deploy operator watches `BirService` and creates/updates:
+   - `Deployment`
+   - `Service`
 
-## Sadə YAML nümunəsi
+## Repository structure (mono-repo)
+
+- **Developer input (only thing developers change)**:
+  - `tenants/<tenant>/simple-yaml/<service>.yaml`
+- **Platform**:
+  - CRD: `config/crd/birservice_crd.yaml`
+  - Operator manifests: `manifests/`
+  - Argo CD apps: `argocd/`
+- **Renderer**:
+  - Helm chart: `charts/birservice/`
+
+Note: `tenants/<tenant>/cr/` is optional and only useful for local/debug. With Argo CD you can keep just `simple-yaml/`.
+
+## Simple YAML example
 
 `tenants/acme/simple-yaml/hello.yaml`:
 
@@ -20,14 +36,49 @@ port: 8080
 replicas: 1
 ```
 
-## ArgoCD (manual yoxdur, bir dəfəlik setup)
+## Install Argo CD (one-time, in-cluster)
 
-- `argocd/applicationset-birservices.yaml` içində `<YOUR_REPO_URL>` hissəsini repo URL ilə dəyişin
-- `kubectl apply -f .\\argocd\\applicationset-birservices.yaml -n argocd`
+```bash
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+kubectl get pods -n argocd
+```
 
-Detallar: `argocd/README.md`
+If your `kubectl` runs on a VPS and you want the UI on your local machine, use an SSH tunnel + port-forward (see `argocd/README.md`).
 
-## Lokal generasiya (debug üçün)
+## Install Easy-Deploy platform (CRD + operator) via Argo CD
+
+1) Build and push the operator image from this repo:
+
+```bash
+docker build -t <YOUR_REGISTRY>/easy-deploy-operator:0.1.0 .
+docker push <YOUR_REGISTRY>/easy-deploy-operator:0.1.0
+```
+
+2) Update these placeholders:
+- `manifests/operator/deployment.yaml`: set the `image:` to your registry
+- `argocd/application-platform.yaml`: set `<YOUR_REPO_URL>`
+
+3) Apply the Argo CD Application:
+
+```bash
+kubectl apply -f argocd/application-platform.yaml -n argocd
+```
+
+## Auto-deploy services from `simple-yaml/` via Argo CD
+
+1) Update `argocd/applicationset-birservices.yaml` and replace `<YOUR_REPO_URL>` (both occurrences).
+2) Apply it:
+
+```bash
+kubectl apply -f argocd/applicationset-birservices.yaml -n argocd
+```
+
+After this, developers only commit `tenants/<tenant>/simple-yaml/*.yaml`. Argo CD renders `BirService` and the operator creates `Deployment`/`Service`.
+
+## Local debug (optional)
+
+Generate a `BirService` YAML from a simple YAML file:
 
 ```powershell
 go run .\cmd\easydeployctl\main.go generate `
@@ -35,29 +86,14 @@ go run .\cmd\easydeployctl\main.go generate `
   -o .\tenants\acme\cr\hello.yaml
 ```
 
-## CRD + Operator (lokal run)
-
-1) CRD-ni apply edin:
-
-```powershell
-kubectl apply -f .\config\crd\birservice_crd.yaml
-```
-
-2) Operatoru lokal işə salın (kubeconfig ilə):
+Run the operator locally (uses your kubeconfig):
 
 ```powershell
 go run .\cmd\operator\main.go
 ```
 
-3) Generasiya olunmuş CR-ni apply edin:
+## MVP notes
 
-```powershell
-kubectl apply -f .\tenants\acme\cr\hello.yaml
-```
-
-## Nəticə (MVP)
-
-- Operator `BirService` → `Deployment` + `Service` yaradır.
-- Status-a `availableReplicas` yazır.
-- CRD-də printer columns var: repo/image/port/availableReplicas.
+- The operator currently reconciles `BirService` into `Deployment` + `Service` only.
+- `BirService` status includes `availableReplicas` and the CRD has printer columns (repo/image/port/availableReplicas).
 
