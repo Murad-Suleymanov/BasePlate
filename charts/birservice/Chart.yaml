@@ -1,0 +1,7 @@
+apiVersion: v2
+name: birservice
+description: Render BirService CR from simple YAML values
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+

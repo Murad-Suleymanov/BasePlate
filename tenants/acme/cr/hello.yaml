@@ -1,0 +1,11 @@
+apiVersion: deploy.easydeploy.io/v1alpha1
+kind: BirService
+metadata:
+  name: hello
+  namespace: acme
+spec:
+  repo: ghcr.io/acme/hello
+  tag: "1.0.0"
+  port: 8080
+  replicas: 1
+

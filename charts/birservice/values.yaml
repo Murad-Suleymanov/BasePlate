@@ -1,0 +1,11 @@
+name: ""
+namespace: ""
+
+image: ""
+repo: ""
+tag: ""
+
+port: 0
+containerPort: 0
+replicas: 1
+

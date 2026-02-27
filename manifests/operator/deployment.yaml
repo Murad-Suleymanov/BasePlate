@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: easy-deploy-operator
+  namespace: easy-deploy-system
+  labels:
+    app.kubernetes.io/name: easy-deploy-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: easy-deploy-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: easy-deploy-operator
+    spec:
+      serviceAccountName: easy-deploy-operator
+      containers:
+        - name: manager
+          image: <YOUR_REGISTRY>/easy-deploy-operator:0.1.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--metrics-bind-address=:8080"
+            - "--health-probe-bind-address=:8081"
+          ports:
+            - name: metrics
+              containerPort: 8080
+            - name: health
+              containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+

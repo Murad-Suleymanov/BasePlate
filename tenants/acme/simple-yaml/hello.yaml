@@ -1,0 +1,7 @@
+name: hello
+namespace: acme
+repo: ghcr.io/acme/hello
+tag: "1.0.0"
+port: 8080
+replicas: 1
+

@@ -1,0 +1,36 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: easy-deploy-birservices
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: <YOUR_REPO_URL>
+        revision: HEAD
+        files:
+          - path: "tenants/*/simple-yaml/*.yaml"
+  template:
+    metadata:
+      name: '{{ printf "%s-%s" (index (splitList "/" .path.path) 1) (trimSuffix ".yaml" .path.basenameNormalized) }}'
+    spec:
+      project: default
+      source:
+        repoURL: <YOUR_REPO_URL>
+        targetRevision: HEAD
+        path: charts/birservice
+        helm:
+          releaseName: '{{ .name }}'
+          valueFiles:
+            - '{{ printf \"../../%s\" .path.path }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ default (index (splitList "/" .path.path) 1) .namespace }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+
