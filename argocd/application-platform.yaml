@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: <YOUR_REPO_URL>
+    repoURL: https://github.com/Murad-Suleymanov/BasePlate
     targetRevision: HEAD
     path: manifests
   destination:

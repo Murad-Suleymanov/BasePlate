@@ -7,7 +7,7 @@ spec:
   goTemplateOptions: ["missingkey=error"]
   generators:
     - git:
-        repoURL: <YOUR_REPO_URL>
+        repoURL: https://github.com/Murad-Suleymanov/BasePlate
         revision: HEAD
         files:
           - path: "tenants/*/simple-yaml/*.yaml"
@@ -17,7 +17,7 @@ spec:
     spec:
       project: default
       source:
-        repoURL: <YOUR_REPO_URL>
+        repoURL: https://github.com/Murad-Suleymanov/BasePlate
         targetRevision: HEAD
         path: charts/birservice
         helm:
