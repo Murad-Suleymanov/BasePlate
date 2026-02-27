@@ -13,7 +13,7 @@ spec:
           - path: "tenants/*/simple-yaml/*.yaml"
   template:
     metadata:
-      name: '{{ printf "%s-%s" (index (splitList "/" .path.path) 1) (trimSuffix ".yaml" .path.basenameNormalized) }}'
+      name: '{{ printf "%s-%s" (index (splitList "/" .path.path) 1) (trimSuffix ".yaml" .path.filenameNormalized) }}'
     spec:
       project: default
       source:
@@ -23,7 +23,7 @@ spec:
         helm:
           releaseName: '{{ .name }}'
           valueFiles:
-            - '{{ printf "../../%s" .path.path }}'
+            - '{{ printf "../../%s/%s" .path.path .path.filename }}'
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{ default (index (splitList "/" .path.path) 1) .namespace }}'
