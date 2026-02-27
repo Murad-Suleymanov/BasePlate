@@ -63,15 +63,12 @@ func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	depName := fmt.Sprintf("%s-deploy", bs.Name)
-	var dep appsv1.Deployment
+	dep := appsv1.Deployment{}
+	dep.Name = depName
+	dep.Namespace = bs.Namespace
 	depKey := types.NamespacedName{Name: depName, Namespace: bs.Namespace}
-	if err := r.Get(ctx, depKey, &dep); err != nil && !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, err
-	}
 
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, &dep, func() error {
-		dep.ObjectMeta.Name = depName
-		dep.ObjectMeta.Namespace = bs.Namespace
 		dep.ObjectMeta.Labels = mergeStringMap(dep.ObjectMeta.Labels, labels)
 
 		replicasCopy := replicas
@@ -95,15 +92,11 @@ func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	svcName := fmt.Sprintf("%s-svc", bs.Name)
-	var svc corev1.Service
-	svcKey := types.NamespacedName{Name: svcName, Namespace: bs.Namespace}
-	if err := r.Get(ctx, svcKey, &svc); err != nil && !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, err
-	}
+	svc := corev1.Service{}
+	svc.Name = svcName
+	svc.Namespace = bs.Namespace
 
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, &svc, func() error {
-		svc.ObjectMeta.Name = svcName
-		svc.ObjectMeta.Namespace = bs.Namespace
 		svc.ObjectMeta.Labels = mergeStringMap(svc.ObjectMeta.Labels, labels)
 
 		svc.Spec.Selector = labels
