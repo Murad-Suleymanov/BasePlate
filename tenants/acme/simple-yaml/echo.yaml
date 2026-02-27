@@ -1,0 +1,6 @@
+name: echo
+namespace: acme
+repo: ealen/echo-server
+tag: "latest"
+port: 8080
+replicas: 1
