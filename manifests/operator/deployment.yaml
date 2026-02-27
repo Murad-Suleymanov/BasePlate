@@ -18,8 +18,8 @@ spec:
       serviceAccountName: easy-deploy-operator
       containers:
         - name: manager
-          image: ghcr.io/murad-suleymanov/easy-deploy-operator:0.1.0
-          imagePullPolicy: IfNotPresent
+          image: ghcr.io/murad-suleymanov/easy-deploy-operator:main
+          imagePullPolicy: Always
           args:
             - "--metrics-bind-address=:8080"
             - "--health-probe-bind-address=:8081"

@@ -48,16 +48,24 @@ If your `kubectl` runs on a VPS and you want the UI on your local machine, use a
 
 ## Install Easy-Deploy platform (CRD + operator) via Argo CD
 
-1) Build and push the operator image from this repo:
+1) Build and push the operator image (recommended: GitHub Actions)
+
+This repo includes a GitHub Actions workflow that builds and pushes:
+- `ghcr.io/<owner>/easy-deploy-operator:main`
+- `ghcr.io/<owner>/easy-deploy-operator:<sha>`
+
+On your first run, make sure the generated GHCR package is **public** (or configure an `imagePullSecret`).
+
+Manual build/push (optional):
 
 ```bash
 docker build -t <YOUR_REGISTRY>/easy-deploy-operator:0.1.0 .
 docker push <YOUR_REGISTRY>/easy-deploy-operator:0.1.0
 ```
 
-2) Update these placeholders:
-- `manifests/operator/deployment.yaml`: set the `image:` to your registry
-- `argocd/application-platform.yaml`: set `<YOUR_REPO_URL>`
+2) Verify/update these files:
+- `manifests/operator/deployment.yaml`: operator image (defaults to `ghcr.io/murad-suleymanov/easy-deploy-operator:main`)
+- `argocd/application-platform.yaml`: repo URL (already set in this repo)
 
 3) Apply the Argo CD Application:
 
