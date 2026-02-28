@@ -4,7 +4,7 @@ Developer yalnız bu faylları əlavə edib Git-ə push edir:
 
 - `tenants/<tenant>/simple-yaml/<service>.yaml`
 
-ArgoCD `ApplicationSet` həmin faylları avtomatik tapır və `charts/birservice` Helm chart ilə `BirService` CR yaradır.
+ArgoCD `ApplicationSet` həmin faylları avtomatik tapır və platform repo-dakı `charts/birservice` Helm chart ilə `BirService` CR yaradır.
 Sonra klasterdə işləyən Easy-Deploy operator `BirService`-dən `Deployment` və `Service` yaradır.
 
 ### 1) Tələblər (bir dəfəlik)
@@ -14,7 +14,7 @@ Sonra klasterdə işləyən Easy-Deploy operator `BirService`-dən `Deployment` 
 
 ### 2) ApplicationSet-i apply edin (bir dəfəlik)
 
-`argocd/applicationset-birservices.yaml` faylında `<YOUR_REPO_URL>` hissəsini repo URL ilə dəyişin, sonra:
+`argocd/applicationset-birservices.yaml` faylında `<CATALOG_REPO_URL>` hissəsini developer repo URL ilə dəyişin, sonra:
 
 ```bash
 kubectl apply -f argocd/applicationset-birservices.yaml -n argocd
@@ -22,7 +22,7 @@ kubectl apply -f argocd/applicationset-birservices.yaml -n argocd
 
 ### 2.1) Platform app (CRD + operator) - ArgoCD ilə
 
-`argocd/application-platform.yaml` faylında `<YOUR_REPO_URL>` və `manifests/operator/deployment.yaml` içində `<YOUR_REGISTRY>` hissələrini doldurun.
+`manifests/operator/deployment.yaml` içində operator image (GHCR) public olmalıdır (və ya `imagePullSecret` lazımdır).
 
 Sonra:
 
@@ -32,6 +32,5 @@ kubectl apply -f argocd/application-platform.yaml -n argocd
 
 ### 3) Developer nümunəsi
 
-`tenants/acme/simple-yaml/hello.yaml` artıq mövcuddur.
-Yalnız `name`, `namespace`, `repo` və `tag` dəyişib commit edin.
+Developer repo-da `tenants/<tenant>/simple-yaml/<service>.yaml` əlavə edin və push edin.
 

@@ -4,15 +4,15 @@ Easy-Deploy lets developers define a service in a **simple YAML file**, commit i
 
 ## How it works
 
-1) Developer commits a file like `tenants/<tenant>/simple-yaml/<service>.yaml`
-2) Argo CD `ApplicationSet` discovers those files and renders a `BirService` Custom Resource using a Helm chart
+1) Developer commits a file like `tenants/<tenant>/simple-yaml/<service>.yaml` (recommended: in a separate “catalog” repo)
+2) Argo CD `ApplicationSet` discovers those files and renders a `BirService` Custom Resource using the platform Helm chart
 3) The Easy-Deploy operator watches `BirService` and creates/updates:
    - `Deployment`
    - `Service`
 
-## Repository structure (mono-repo)
+## Repository structure
 
-- **Developer input (only thing developers change)**:
+- **Developer catalog repo (recommended)**:
   - `tenants/<tenant>/simple-yaml/<service>.yaml`
 - **Platform**:
   - CRD: `config/crd/birservice_crd.yaml`
@@ -75,7 +75,7 @@ kubectl apply -f argocd/application-platform.yaml -n argocd
 
 ## Auto-deploy services from `simple-yaml/` via Argo CD
 
-1) Update `argocd/applicationset-birservices.yaml` and replace `<YOUR_REPO_URL>` (both occurrences).
+1) Update `argocd/applicationset-birservices.yaml` and replace `<CATALOG_REPO_URL>` with your developer catalog repo URL.
 2) Apply it:
 
 ```bash

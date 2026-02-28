@@ -7,7 +7,8 @@ spec:
   goTemplateOptions: ["missingkey=error"]
   generators:
     - git:
-        repoURL: https://github.com/Murad-Suleymanov/BasePlate
+        # Developer catalog repo (only simple-yaml lives here)
+        repoURL: <CATALOG_REPO_URL>
         revision: HEAD
         files:
           - path: "tenants/*/simple-yaml/*.yaml"
@@ -16,14 +17,20 @@ spec:
       name: '{{ printf "%s-%s" (index (splitList "/" .path.path) 1) (trimSuffix ".yaml" .path.filenameNormalized) }}'
     spec:
       project: default
-      source:
-        repoURL: https://github.com/Murad-Suleymanov/BasePlate
-        targetRevision: HEAD
-        path: charts/birservice
-        helm:
-          releaseName: '{{ .name }}'
-          valueFiles:
-            - '{{ printf "../../%s/%s" .path.path .path.filename }}'
+      sources:
+        # Platform repo provides the Helm chart
+        - repoURL: https://github.com/Murad-Suleymanov/BasePlate
+          targetRevision: HEAD
+          path: charts/birservice
+          helm:
+            releaseName: '{{ .name }}'
+            valueFiles:
+              - '$values/{{ .path.path }}/{{ .path.filename }}'
+
+        # Catalog repo provides the values file content
+        - repoURL: <CATALOG_REPO_URL>
+          targetRevision: HEAD
+          ref: values
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{ default (index (splitList "/" .path.path) 1) .namespace }}'
