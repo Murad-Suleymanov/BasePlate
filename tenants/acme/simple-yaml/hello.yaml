@@ -1,6 +1,0 @@
-name: hello
-namespace: acme
-image: nginx:1.27
-port: 8080
-containerPort: 80
-replicas: 1

@@ -14,7 +14,7 @@ Sonra klasterdə işləyən Easy-Deploy operator `BirService`-dən `Deployment` 
 
 ### 2) ApplicationSet-i apply edin (bir dəfəlik)
 
-`argocd/applicationset-birservices.yaml` faylında `<CATALOG_REPO_URL>` hissəsini developer repo URL ilə dəyişin, sonra:
+`argocd/applicationset-birservices.yaml` artıq developer repo-ya (`BasePlate-Dev`) işarə edir. Sonra:
 
 ```bash
 kubectl apply -f argocd/applicationset-birservices.yaml -n argocd

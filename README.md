@@ -25,7 +25,7 @@ Note: `tenants/<tenant>/cr/` is optional and only useful for local/debug. With A
 
 ## Simple YAML example
 
-`tenants/acme/simple-yaml/hello.yaml`:
+In the catalog repo (for example `BasePlate-Dev`): `tenants/acme/simple-yaml/hello.yaml`:
 
 ```yaml
 name: hello
@@ -75,7 +75,7 @@ kubectl apply -f argocd/application-platform.yaml -n argocd
 
 ## Auto-deploy services from `simple-yaml/` via Argo CD
 
-1) Update `argocd/applicationset-birservices.yaml` and replace `<CATALOG_REPO_URL>` with your developer catalog repo URL.
+1) Ensure `argocd/applicationset-birservices.yaml` points to your developer catalog repo URL.
 2) Apply it:
 
 ```bash

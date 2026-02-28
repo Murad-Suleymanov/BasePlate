@@ -8,7 +8,7 @@ spec:
   generators:
     - git:
         # Developer catalog repo (only simple-yaml lives here)
-        repoURL: <CATALOG_REPO_URL>
+        repoURL: https://github.com/Murad-Suleymanov/BasePlate-Dev
         revision: HEAD
         files:
           - path: "tenants/*/simple-yaml/*.yaml"
@@ -28,7 +28,7 @@ spec:
               - '$values/{{ .path.path }}/{{ .path.filename }}'
 
         # Catalog repo provides the values file content
-        - repoURL: <CATALOG_REPO_URL>
+        - repoURL: https://github.com/Murad-Suleymanov/BasePlate-Dev
           targetRevision: HEAD
           ref: values
       destination:

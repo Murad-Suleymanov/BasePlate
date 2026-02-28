@@ -1,6 +1,0 @@
-name: ping
-namespace: demo
-image: hashicorp/http-echo:1.0
-port: 8080
-containerPort: 5678
-replicas: 1
