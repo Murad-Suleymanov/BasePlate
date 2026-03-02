@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -63,67 +64,79 @@ func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	depName := fmt.Sprintf("%s-deploy", bs.Name)
-	dep := appsv1.Deployment{}
-	dep.Name = depName
-	dep.Namespace = bs.Namespace
 	depKey := types.NamespacedName{Name: depName, Namespace: bs.Namespace}
 
-	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, &dep, func() error {
-		dep.ObjectMeta.Labels = mergeStringMap(dep.ObjectMeta.Labels, labels)
+	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		dep := appsv1.Deployment{}
+		dep.Name = depName
+		dep.Namespace = bs.Namespace
 
-		replicasCopy := replicas
-		dep.Spec.Replicas = &replicasCopy
-		dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
-		dep.Spec.Template.ObjectMeta.Labels = labels
-		dep.Spec.Template.Spec.Containers = []corev1.Container{
-			{
-				Name:  "app",
-				Image: image,
-				Ports: []corev1.ContainerPort{
-					{ContainerPort: containerPort},
+		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, &dep, func() error {
+			dep.ObjectMeta.Labels = mergeStringMap(dep.ObjectMeta.Labels, labels)
+
+			replicasCopy := replicas
+			dep.Spec.Replicas = &replicasCopy
+			dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
+			dep.Spec.Template.ObjectMeta.Labels = labels
+			dep.Spec.Template.Spec.Containers = []corev1.Container{
+				{
+					Name:  "app",
+					Image: image,
+					Ports: []corev1.ContainerPort{
+						{ContainerPort: containerPort},
+					},
 				},
-			},
-		}
+			}
 
-		return ctrl.SetControllerReference(&bs, &dep, r.Scheme)
-	})
-	if err != nil {
+			return ctrl.SetControllerReference(&bs, &dep, r.Scheme)
+		})
+		return err
+	}); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	svcName := fmt.Sprintf("%s-svc", bs.Name)
-	svc := corev1.Service{}
-	svc.Name = svcName
-	svc.Namespace = bs.Namespace
+	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		svc := corev1.Service{}
+		svc.Name = svcName
+		svc.Namespace = bs.Namespace
 
-	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, &svc, func() error {
-		svc.ObjectMeta.Labels = mergeStringMap(svc.ObjectMeta.Labels, labels)
+		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, &svc, func() error {
+			svc.ObjectMeta.Labels = mergeStringMap(svc.ObjectMeta.Labels, labels)
 
-		svc.Spec.Selector = labels
-		svc.Spec.Type = corev1.ServiceTypeClusterIP
-		svc.Spec.Ports = []corev1.ServicePort{
-			{
-				Name:       "http",
-				Port:       port,
-				TargetPort: intstr.FromInt(int(containerPort)),
-				Protocol:   corev1.ProtocolTCP,
-			},
-		}
+			svc.Spec.Selector = labels
+			svc.Spec.Type = corev1.ServiceTypeClusterIP
+			svc.Spec.Ports = []corev1.ServicePort{
+				{
+					Name:       "http",
+					Port:       port,
+					TargetPort: intstr.FromInt(int(containerPort)),
+					Protocol:   corev1.ProtocolTCP,
+				},
+			}
 
-		return ctrl.SetControllerReference(&bs, &svc, r.Scheme)
-	})
-	if err != nil {
+			return ctrl.SetControllerReference(&bs, &svc, r.Scheme)
+		})
+		return err
+	}); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	// Refresh deployment to get status.
+	var dep appsv1.Deployment
 	if err := r.Get(ctx, depKey, &dep); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	if bs.Status.AvailableReplicas != dep.Status.AvailableReplicas {
-		bs.Status.AvailableReplicas = dep.Status.AvailableReplicas
-		if err := r.Status().Update(ctx, &bs); err != nil {
+		if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+			var latest deployv1alpha1.BirService
+			if err := r.Get(ctx, req.NamespacedName, &latest); err != nil {
+				return err
+			}
+			latest.Status.AvailableReplicas = dep.Status.AvailableReplicas
+			return r.Status().Update(ctx, &latest)
+		}); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
