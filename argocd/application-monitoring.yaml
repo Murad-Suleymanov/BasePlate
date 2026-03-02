@@ -1,0 +1,43 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: 82.4.3
+    helm:
+      releaseName: monitoring
+      values: |
+        # Safer defaults for many VPS clusters: disable control-plane component scrapes
+        # (these often require extra endpoints/certs and otherwise spam "target down").
+        kubeControllerManager:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+        kubeEtcd:
+          enabled: false
+
+        grafana:
+          enabled: true
+
+        prometheus:
+          enabled: true
+          prometheusSpec:
+            retention: 7d
+
+        alertmanager:
+          enabled: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+
