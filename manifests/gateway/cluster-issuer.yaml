@@ -6,7 +6,7 @@ spec:
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
     # Replace with your real email for Let's Encrypt notifications
-    email: admin@example.com
+    email: admin@easysolution.work
     privateKeySecretRef:
       name: letsencrypt-prod-account-key
     solvers:
@@ -24,7 +24,7 @@ metadata:
 spec:
   acme:
     server: https://acme-staging-v02.api.letsencrypt.org/directory
-    email: admin@example.com
+    email: admin@easysolution.work
     privateKeySecretRef:
       name: letsencrypt-staging-account-key
     solvers:

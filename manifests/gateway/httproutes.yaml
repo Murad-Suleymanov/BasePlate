@@ -10,7 +10,7 @@ spec:
     - name: main-gateway
       namespace: nginx-gateway
   hostnames:
-    - "echo.example.com"
+    - "echo.easysolution.work"
   rules:
     - backendRefs:
         - name: echo-svc
@@ -27,7 +27,7 @@ spec:
     - name: main-gateway
       namespace: nginx-gateway
   hostnames:
-    - "whoami.example.com"
+    - "whoami.easysolution.work"
   rules:
     - backendRefs:
         - name: whoami-svc
@@ -44,7 +44,7 @@ spec:
     - name: main-gateway
       namespace: nginx-gateway
   hostnames:
-    - "grafana.example.com"
+    - "grafana.easysolution.work"
   rules:
     - backendRefs:
         - name: monitoring-grafana
@@ -61,7 +61,7 @@ spec:
     - name: main-gateway
       namespace: nginx-gateway
   hostnames:
-    - "argocd.example.com"
+    - "argocd.easysolution.work"
   rules:
     - backendRefs:
         - name: argocd-server
