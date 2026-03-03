@@ -16,8 +16,8 @@ spec:
               name: cloudflare-api-token
               key: cloudflare_api_token
         selector:
-          dnsNames:
-            - "*.easysolution.work"
+          dnsZones:
+            - "easysolution.work"
       - http01:
           gatewayHTTPRoute:
             parentRefs:
@@ -42,8 +42,8 @@ spec:
               name: cloudflare-api-token
               key: cloudflare_api_token
         selector:
-          dnsNames:
-            - "*.easysolution.work"
+          dnsZones:
+            - "easysolution.work"
       - http01:
           gatewayHTTPRoute:
             parentRefs:
