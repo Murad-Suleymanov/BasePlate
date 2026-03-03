@@ -40,4 +40,6 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      # CRDs in this chart can be large; server-side apply avoids last-applied annotation limits.
+      - ServerSideApply=true
 
