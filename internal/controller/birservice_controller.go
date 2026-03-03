@@ -220,8 +220,9 @@ func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deplo
 			route.Object["spec"] = map[string]interface{}{
 				"parentRefs": []interface{}{
 					map[string]interface{}{
-						"name":      gatewayName,
-						"namespace": gatewayNamespace,
+						"name":        gatewayName,
+						"namespace":   gatewayNamespace,
+						"sectionName": "http",
 					},
 				},
 				"hostnames": []interface{}{hostname},
