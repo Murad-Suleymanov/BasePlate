@@ -224,6 +224,11 @@ func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deplo
 						"namespace":   gatewayNamespace,
 						"sectionName": "http",
 					},
+					map[string]interface{}{
+						"name":        gatewayName,
+						"namespace":   gatewayNamespace,
+						"sectionName": "https",
+					},
 				},
 				"hostnames": []interface{}{hostname},
 				"rules": []interface{}{

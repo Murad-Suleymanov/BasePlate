@@ -113,12 +113,17 @@ Create a Cloudflare API token at https://dash.cloudflare.com/profile/api-tokens 
 - **Zone:DNS:Edit**
 - **Zone:Zone:Read**
 
-Then create the secret:
+Then create the secrets (ExternalDNS and cert-manager both need it):
 
 ```bash
 kubectl create ns external-dns
 kubectl create secret generic cloudflare-api-token \
   --namespace external-dns \
+  --from-literal=cloudflare_api_token=YOUR_CLOUDFLARE_TOKEN
+
+kubectl create ns cert-manager
+kubectl create secret generic cloudflare-api-token \
+  --namespace cert-manager \
   --from-literal=cloudflare_api_token=YOUR_CLOUDFLARE_TOKEN
 ```
 
