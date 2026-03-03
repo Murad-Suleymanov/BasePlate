@@ -8,4 +8,7 @@ resources:
   - operator/clusterrole.yaml
   - operator/clusterrolebinding.yaml
   - operator/deployment.yaml
+  - registry/namespace.yaml
+  - registry/deployment.yaml
+  - registry/service.yaml
 
