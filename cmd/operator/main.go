@@ -49,14 +49,16 @@ func main() {
 	}
 
 	baseDomain := os.Getenv("BASE_DOMAIN")
+	targetIP := os.Getenv("TARGET_IP")
 	if baseDomain != "" {
-		ctrl.Log.Info("auto-hostname enabled", "baseDomain", baseDomain)
+		ctrl.Log.Info("auto-hostname enabled", "baseDomain", baseDomain, "targetIP", targetIP)
 	}
 
 	if err := (&controller.BirServiceReconciler{
 		Client:     mgr.GetClient(),
 		Scheme:     mgr.GetScheme(),
 		BaseDomain: baseDomain,
+		TargetIP:   targetIP,
 	}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.Error(err, "unable to create controller", "controller", "BirService")
 		os.Exit(1)

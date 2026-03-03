@@ -26,6 +26,8 @@ spec:
           env:
             - name: BASE_DOMAIN
               value: "easysolution.work"
+            - name: TARGET_IP
+              value: "116.203.203.121"
           ports:
             - name: metrics
               containerPort: 8080

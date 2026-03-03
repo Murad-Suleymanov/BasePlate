@@ -26,6 +26,7 @@ type BirServiceReconciler struct {
 	client.Client
 	Scheme     *runtime.Scheme
 	BaseDomain string
+	TargetIP   string
 }
 
 func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -240,6 +241,12 @@ func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deplo
 				"app.kubernetes.io/name":       bs.Name,
 				"app.kubernetes.io/managed-by": "easy-deploy-operator",
 			}))
+
+			if r.TargetIP != "" {
+				route.SetAnnotations(mergeStringMap(route.GetAnnotations(), map[string]string{
+					"external-dns.alpha.kubernetes.io/target": r.TargetIP,
+				}))
+			}
 
 			return ctrl.SetControllerReference(bs, route, r.Scheme)
 		})
