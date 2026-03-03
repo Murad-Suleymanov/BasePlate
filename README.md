@@ -147,20 +147,7 @@ kubectl apply -n argocd -f argocd/application-monitoring.yaml
 kubectl apply -n argocd -f argocd/application-external-dns.yaml
 ```
 
-### Step 8: Port redirect (worker node)
-
-On each worker node, redirect standard HTTP/HTTPS ports to NodePort range. Run **once**, persists across reboots:
-
-```bash
-iptables -t nat -A PREROUTING -p tcp --dport 80 ! -s 192.168.0.0/16 -j REDIRECT --to-port 30080
-iptables -t nat -A PREROUTING -p tcp --dport 443 ! -s 192.168.0.0/16 -j REDIRECT --to-port 30443
-apt install -y iptables-persistent
-netfilter-persistent save
-```
-
-The `! -s 192.168.0.0/16` excludes internal pod traffic from being redirected (only external traffic is affected).
-
-### Step 9: Verify
+### Step 8: Verify
 
 ```bash
 # All ArgoCD apps synced?

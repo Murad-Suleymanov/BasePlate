@@ -13,14 +13,14 @@ spec:
       releaseName: ngf
       values: |
         nginx:
+          container:
+            hostPorts:
+              - port: 80
+                containerPort: 80
+              - port: 443
+                containerPort: 443
           service:
-            type: NodePort
-            externalTrafficPolicy: Local
-            nodePorts:
-              - port: 30080
-                listenerPort: 80
-              - port: 30443
-                listenerPort: 443
+            type: ClusterIP
   destination:
     server: https://kubernetes.default.svc
     namespace: nginx-gateway
