@@ -48,9 +48,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	baseDomain := os.Getenv("BASE_DOMAIN")
+	if baseDomain != "" {
+		ctrl.Log.Info("auto-hostname enabled", "baseDomain", baseDomain)
+	}
+
 	if err := (&controller.BirServiceReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		BaseDomain: baseDomain,
 	}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.Error(err, "unable to create controller", "controller", "BirService")
 		os.Exit(1)

@@ -3,6 +3,8 @@ kind: Gateway
 metadata:
   name: main-gateway
   namespace: nginx-gateway
+  annotations:
+    external-dns.alpha.kubernetes.io/target: "116.203.203.121"
 spec:
   gatewayClassName: nginx
   listeners:

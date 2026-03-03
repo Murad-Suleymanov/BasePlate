@@ -8,7 +8,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/util/retry"
@@ -22,7 +24,8 @@ import (
 
 type BirServiceReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme     *runtime.Scheme
+	BaseDomain string
 }
 
 func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -122,6 +125,11 @@ func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
+	// Reconcile HTTPRoute if hostname is specified.
+	if err := r.reconcileHTTPRoute(ctx, &bs, svcName, port); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// Refresh deployment to get status.
 	var dep appsv1.Deployment
 	if err := r.Get(ctx, depKey, &dep); err != nil {
@@ -164,6 +172,79 @@ func resolveImage(bs *deployv1alpha1.BirService) (string, error) {
 		tag = "latest"
 	}
 	return fmt.Sprintf("%s:%s", bs.Spec.Repo, tag), nil
+}
+
+var httpRouteGVK = schema.GroupVersionKind{
+	Group:   "gateway.networking.k8s.io",
+	Version: "v1",
+	Kind:    "HTTPRoute",
+}
+
+const (
+	gatewayName      = "main-gateway"
+	gatewayNamespace = "nginx-gateway"
+)
+
+func (r *BirServiceReconciler) resolveHostname(bs *deployv1alpha1.BirService) string {
+	if bs.Spec.Hostname != "" {
+		return bs.Spec.Hostname
+	}
+	if r.BaseDomain != "" {
+		return fmt.Sprintf("%s.%s", bs.Name, r.BaseDomain)
+	}
+	return ""
+}
+
+func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deployv1alpha1.BirService, svcName string, svcPort int32) error {
+	routeName := fmt.Sprintf("%s-route", bs.Name)
+	hostname := r.resolveHostname(bs)
+
+	if hostname == "" {
+		existing := &unstructured.Unstructured{}
+		existing.SetGroupVersionKind(httpRouteGVK)
+		err := r.Get(ctx, types.NamespacedName{Name: routeName, Namespace: bs.Namespace}, existing)
+		if err == nil {
+			return r.Delete(ctx, existing)
+		}
+		return client.IgnoreNotFound(err)
+	}
+
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		route := &unstructured.Unstructured{}
+		route.SetGroupVersionKind(httpRouteGVK)
+		route.SetName(routeName)
+		route.SetNamespace(bs.Namespace)
+
+		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, route, func() error {
+			route.Object["spec"] = map[string]interface{}{
+				"parentRefs": []interface{}{
+					map[string]interface{}{
+						"name":      gatewayName,
+						"namespace": gatewayNamespace,
+					},
+				},
+				"hostnames": []interface{}{hostname},
+				"rules": []interface{}{
+					map[string]interface{}{
+						"backendRefs": []interface{}{
+							map[string]interface{}{
+								"name": svcName,
+								"port": int64(svcPort),
+							},
+						},
+					},
+				},
+			}
+
+			route.SetLabels(mergeStringMap(route.GetLabels(), map[string]string{
+				"app.kubernetes.io/name":       bs.Name,
+				"app.kubernetes.io/managed-by": "easy-deploy-operator",
+			}))
+
+			return ctrl.SetControllerReference(bs, route, r.Scheme)
+		})
+		return err
+	})
 }
 
 func mergeStringMap(dst, src map[string]string) map[string]string {

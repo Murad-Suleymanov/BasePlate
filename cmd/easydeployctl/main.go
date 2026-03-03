@@ -24,8 +24,9 @@ type SimpleServiceYAML struct {
 	Repo string `json:"repo" yaml:"repo"`
 	Tag  string `json:"tag" yaml:"tag"`
 
-	Port     int32 `json:"port" yaml:"port"`
-	Replicas int32 `json:"replicas" yaml:"replicas"`
+	Port     int32  `json:"port" yaml:"port"`
+	Replicas int32  `json:"replicas" yaml:"replicas"`
+	Hostname string `json:"hostname" yaml:"hostname"`
 }
 
 func main() {
@@ -108,6 +109,7 @@ func generate(args []string) {
 			Tag:      s.Tag,
 			Replicas: replicas,
 			Port:     port,
+			Hostname: s.Hostname,
 		},
 	}
 

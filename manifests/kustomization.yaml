@@ -12,7 +12,6 @@ resources:
   - registry/deployment.yaml
   - registry/service.yaml
   - gateway/gateway.yaml
-  - gateway/httproutes.yaml
   - gateway/reference-grants.yaml
   - gateway/cluster-issuer.yaml
 

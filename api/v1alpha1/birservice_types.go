@@ -24,6 +24,10 @@ type BirServiceSpec struct {
 
 	// ContainerPort is the container port (default = Port).
 	ContainerPort *int32 `json:"containerPort,omitempty"`
+
+	// Hostname is the public DNS name for external access, e.g. myapp.easysolution.work.
+	// If set, the operator creates an HTTPRoute for the Gateway.
+	Hostname string `json:"hostname,omitempty"`
 }
 
 // BirServiceStatus defines the observed state of BirService
