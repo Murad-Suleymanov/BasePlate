@@ -14,6 +14,9 @@ spec:
       # Install CRDs manually via `kubectl create` (they are too large for client-side apply).
       skipCrds: true
       values: |
+        crds:
+          enabled: false
+
         # Safer defaults for many VPS clusters: disable control-plane component scrapes
         # (these often require extra endpoints/certs and otherwise spam "target down").
         kubeControllerManager:
