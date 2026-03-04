@@ -6,33 +6,39 @@ import (
 
 // BirServiceSpec defines the desired state of BirService
 type BirServiceSpec struct {
-	// Image is a fully qualified container image reference.
-	// If empty, repo+tag will be used.
+	// Image is a fully qualified container image reference (e.g. ealen/echo-server:0.9.2).
 	Image string `json:"image,omitempty"`
 
-	// Repo is an image repository, e.g. ghcr.io/acme/hello
+	// Repo is either a container image repository (ghcr.io/acme/hello) or a
+	// Git URL (https://github.com/user/app) containing a Dockerfile to build.
 	Repo string `json:"repo,omitempty"`
 
-	// Tag is an image tag, e.g. 1.0.0
+	// Tag is an image tag or git ref (branch/tag/commit). Defaults to "latest" for
+	// image repos and "main" for git repos.
 	Tag string `json:"tag,omitempty"`
+
+	// Dockerfile path relative to repo root (default: "Dockerfile"). Only used for git repos.
+	Dockerfile string `json:"dockerfile,omitempty"`
 
 	// Replicas is desired pod replicas (default 1).
 	Replicas *int32 `json:"replicas,omitempty"`
 
-	// Port is the Service port (default 80).
+	// Port is the Service port (default 8080).
 	Port *int32 `json:"port,omitempty"`
 
 	// ContainerPort is the container port (default = Port).
 	ContainerPort *int32 `json:"containerPort,omitempty"`
 
-	// Hostname is the public DNS name for external access, e.g. myapp.easysolution.work.
-	// If set, the operator creates an HTTPRoute for the Gateway.
+	// Hostname is the public DNS name for external access.
+	// If empty, auto-generated as <name>-<namespace>.<baseDomain>.
 	Hostname string `json:"hostname,omitempty"`
 }
 
 // BirServiceStatus defines the observed state of BirService
 type BirServiceStatus struct {
-	AvailableReplicas int32 `json:"availableReplicas,omitempty"`
+	AvailableReplicas int32  `json:"availableReplicas,omitempty"`
+	BuildImage        string `json:"buildImage,omitempty"`
+	BuildStatus       string `json:"buildStatus,omitempty"`
 }
 
 // +kubebuilder:object:root=true

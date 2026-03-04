@@ -6,9 +6,11 @@ Easy-Deploy lets developers define a service in a **simple YAML file**, commit i
 
 1. Developer commits a simple YAML to the catalog repo (`BasePlate-Dev`)
 2. ArgoCD `ApplicationSet` discovers it and creates a `BirService` Custom Resource
-3. The Easy-Deploy operator creates: `Deployment` + `Service` + `HTTPRoute`
+3. The Easy-Deploy operator:
+   - **Ready image?** Creates `Deployment` + `Service` + `HTTPRoute`
+   - **Git repo?** Runs a Kaniko build Job → pushes to local registry → then deploys
 4. ExternalDNS reads the HTTPRoute and creates a Cloudflare DNS record
-5. Service is accessible at `<name>.easysolution.work`
+5. Service is accessible at `https://<name>-<namespace>.easysolution.work`
 
 ## Repository structure
 
@@ -40,19 +42,39 @@ BasePlate-Dev/                      # Developer catalog repo
     └── <service>.yaml
 ```
 
-## Simple YAML example (developer writes only this)
+## Simple YAML examples (developer writes only this)
 
-In `BasePlate-Dev` repo: `tenants/dev/simple-yaml/echo.yaml`:
+In `BasePlate-Dev` repo: `tenants/dev/simple-yaml/<service>.yaml`
+
+**Deploy a ready image (1 line):**
 
 ```yaml
-name: echo
-namespace: dev
 image: ealen/echo-server:0.9.2
-port: 8080
-replicas: 1
 ```
 
-Result: `echo.easysolution.work` automatically becomes accessible.
+**Build from Git repo (1 line):**
+
+```yaml
+repo: https://github.com/user/myapp
+```
+
+**With optional overrides:**
+
+```yaml
+repo: https://github.com/user/myapp
+tag: v2.0.0
+port: 3000
+replicas: 3
+dockerfile: build/Dockerfile
+```
+
+Everything else is automatic:
+- `name` = filename (`myapp.yaml` → `myapp`)
+- `namespace` = folder (`tenants/dev/` → `dev`)
+- `hostname` = `<name>-<namespace>.easysolution.work`
+- `port` = default 8080
+- `replicas` = default 1
+- `tag` = default `latest` (images) or `main` (git repos)
 
 ---
 
@@ -178,13 +200,18 @@ kubectl -n monitoring get pods
 Developer simply commits a YAML to `BasePlate-Dev` repo. No other steps needed:
 
 ```yaml
-name: myapp
-namespace: dev
-image: myregistry/myapp:1.0.0
-port: 8080
+image: nginxdemos/hello:plain-text
 ```
 
-Within ~2 minutes: `myapp.easysolution.work` is live.
+Within ~2 minutes: `https://<name>-<namespace>.easysolution.work` is live with HTTPS.
+
+For Git repos with a Dockerfile:
+
+```yaml
+repo: https://github.com/user/myapp
+```
+
+Within ~3 minutes: Kaniko builds the image, pushes to local registry, and deploys.
 
 ## Configuration
 

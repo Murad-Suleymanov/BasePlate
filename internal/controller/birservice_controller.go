@@ -3,8 +3,10 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,6 +22,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	deployv1alpha1 "easy-deploy/api/v1alpha1"
+)
+
+const (
+	registryURL = "registry.registry.svc.cluster.local:5000"
+	kanikoImage = "gcr.io/kaniko-project/executor:latest"
 )
 
 type BirServiceReconciler struct {
@@ -40,18 +47,27 @@ func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
+	// If repo is a Git URL, handle the build-then-deploy flow.
+	if isGitURL(bs.Spec.Repo) {
+		return r.reconcileBuild(ctx, req, &bs)
+	}
+
 	image, err := resolveImage(&bs)
 	if err != nil {
 		l.Error(err, "invalid image configuration")
 		return ctrl.Result{}, nil
 	}
 
+	return r.reconcileDeployment(ctx, req, &bs, image)
+}
+
+func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl.Request, bs *deployv1alpha1.BirService, image string) (ctrl.Result, error) {
 	replicas := int32(1)
 	if bs.Spec.Replicas != nil {
 		replicas = *bs.Spec.Replicas
 	}
 
-	port := int32(80)
+	port := int32(8080)
 	if bs.Spec.Port != nil && *bs.Spec.Port > 0 {
 		port = *bs.Spec.Port
 	}
@@ -92,7 +108,7 @@ func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 				},
 			}
 
-			return ctrl.SetControllerReference(&bs, &dep, r.Scheme)
+			return ctrl.SetControllerReference(bs, &dep, r.Scheme)
 		})
 		return err
 	}); err != nil {
@@ -119,19 +135,17 @@ func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 				},
 			}
 
-			return ctrl.SetControllerReference(&bs, &svc, r.Scheme)
+			return ctrl.SetControllerReference(bs, &svc, r.Scheme)
 		})
 		return err
 	}); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// Reconcile HTTPRoute if hostname is specified.
-	if err := r.reconcileHTTPRoute(ctx, &bs, svcName, port); err != nil {
+	if err := r.reconcileHTTPRoute(ctx, bs, svcName, port); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// Refresh deployment to get status.
 	var dep appsv1.Deployment
 	if err := r.Get(ctx, depKey, &dep); err != nil {
 		return ctrl.Result{}, err
@@ -153,20 +167,139 @@ func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	return ctrl.Result{}, nil
 }
 
+// reconcileBuild handles Git-based repos: creates a Kaniko build Job, waits for
+// completion, then deploys the built image from the local registry.
+func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Request, bs *deployv1alpha1.BirService) (ctrl.Result, error) {
+	l := log.FromContext(ctx)
+
+	tag := bs.Spec.Tag
+	if tag == "" {
+		tag = "main"
+	}
+	buildImage := fmt.Sprintf("%s/%s:%s", registryURL, bs.Name, tag)
+	jobName := fmt.Sprintf("%s-build", bs.Name)
+
+	var job batchv1.Job
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: bs.Namespace}, &job)
+
+	if apierrors.IsNotFound(err) {
+		l.Info("creating Kaniko build job", "repo", bs.Spec.Repo, "image", buildImage)
+
+		dockerfile := bs.Spec.Dockerfile
+		if dockerfile == "" {
+			dockerfile = "Dockerfile"
+		}
+
+		gitContext := fmt.Sprintf("git://%s#refs/heads/%s", strings.TrimPrefix(bs.Spec.Repo, "https://"), tag)
+
+		args := []string{
+			"--context=" + gitContext,
+			"--dockerfile=" + dockerfile,
+			"--destination=" + buildImage,
+			"--insecure",
+			"--cache=false",
+		}
+
+		job = batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      jobName,
+				Namespace: bs.Namespace,
+				Labels: map[string]string{
+					"app.kubernetes.io/name":       bs.Name,
+					"app.kubernetes.io/managed-by": "easy-deploy-operator",
+					"deploy.easydeploy.io/purpose": "build",
+				},
+			},
+			Spec: batchv1.JobSpec{
+				BackoffLimit: int32Ptr(2),
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						RestartPolicy: corev1.RestartPolicyNever,
+						Containers: []corev1.Container{
+							{
+								Name:  "kaniko",
+								Image: kanikoImage,
+								Args:  args,
+							},
+						},
+					},
+				},
+			},
+		}
+
+		if err := ctrl.SetControllerReference(bs, &job, r.Scheme); err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.Create(ctx, &job); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		return r.updateBuildStatus(ctx, req, bs, buildImage, "Building")
+	}
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Job exists — check status.
+	if job.Status.Succeeded > 0 {
+		if bs.Status.BuildStatus != "Succeeded" {
+			if _, err := r.updateBuildStatus(ctx, req, bs, buildImage, "Succeeded"); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		l.Info("build succeeded, deploying", "image", buildImage)
+		return r.reconcileDeployment(ctx, req, bs, buildImage)
+	}
+
+	if job.Status.Failed > 0 {
+		l.Error(nil, "build job failed", "job", jobName)
+		return r.updateBuildStatus(ctx, req, bs, buildImage, "Failed")
+	}
+
+	l.Info("build job still running", "job", jobName)
+	return ctrl.Result{RequeueAfter: 10 * 1e9}, nil // requeue after 10s
+}
+
+func (r *BirServiceReconciler) updateBuildStatus(ctx context.Context, req ctrl.Request, bs *deployv1alpha1.BirService, image, status string) (ctrl.Result, error) {
+	return ctrl.Result{}, retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var latest deployv1alpha1.BirService
+		if err := r.Get(ctx, req.NamespacedName, &latest); err != nil {
+			return err
+		}
+		latest.Status.BuildImage = image
+		latest.Status.BuildStatus = status
+		return r.Status().Update(ctx, &latest)
+	})
+}
+
 func (r *BirServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&deployv1alpha1.BirService{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Owns(&batchv1.Job{}).
 		Complete(r)
+}
+
+func isGitURL(repo string) bool {
+	if repo == "" {
+		return false
+	}
+	return strings.HasPrefix(repo, "https://github.com/") ||
+		strings.HasPrefix(repo, "https://gitlab.com/") ||
+		strings.HasPrefix(repo, "https://bitbucket.org/") ||
+		strings.HasSuffix(repo, ".git")
 }
 
 func resolveImage(bs *deployv1alpha1.BirService) (string, error) {
 	if bs.Spec.Image != "" {
 		return bs.Spec.Image, nil
 	}
+	if bs.Status.BuildImage != "" {
+		return bs.Status.BuildImage, nil
+	}
 	if bs.Spec.Repo == "" {
-		return "", fmt.Errorf("spec.image is empty and spec.repo is empty")
+		return "", fmt.Errorf("one of spec.image or spec.repo is required")
 	}
 	tag := bs.Spec.Tag
 	if tag == "" {
@@ -174,6 +307,8 @@ func resolveImage(bs *deployv1alpha1.BirService) (string, error) {
 	}
 	return fmt.Sprintf("%s:%s", bs.Spec.Repo, tag), nil
 }
+
+func int32Ptr(i int32) *int32 { return &i }
 
 var httpRouteGVK = schema.GroupVersionKind{
 	Group:   "gateway.networking.k8s.io",
@@ -191,7 +326,7 @@ func (r *BirServiceReconciler) resolveHostname(bs *deployv1alpha1.BirService) st
 		return bs.Spec.Hostname
 	}
 	if r.BaseDomain != "" {
-		return fmt.Sprintf("%s.%s", bs.Name, r.BaseDomain)
+		return fmt.Sprintf("%s-%s.%s", bs.Name, bs.Namespace, r.BaseDomain)
 	}
 	return ""
 }

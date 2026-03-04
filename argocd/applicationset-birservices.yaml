@@ -23,7 +23,7 @@ spec:
           targetRevision: HEAD
           path: charts/birservice
           helm:
-            releaseName: '{{ .name }}'
+            releaseName: '{{ trimSuffix ".yaml" .path.filenameNormalized }}'
             valueFiles:
               - '$values/{{ .path.path }}/{{ .path.filename }}'
 

@@ -1,7 +1,7 @@
 apiVersion: deploy.easydeploy.io/v1alpha1
 kind: BirService
 metadata:
-  name: {{ required "name is required" .Values.name | quote }}
+  name: {{ default .Release.Name .Values.name | quote }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
     app.kubernetes.io/managed-by: "argocd"
@@ -9,9 +9,15 @@ metadata:
 spec:
 {{- if .Values.image }}
   image: {{ .Values.image | quote }}
-{{- else }}
-  repo: {{ required "repo is required when image is empty" .Values.repo | quote }}
-  tag: {{ default "latest" .Values.tag | quote }}
+{{- end }}
+{{- if .Values.repo }}
+  repo: {{ .Values.repo | quote }}
+{{- end }}
+{{- if .Values.tag }}
+  tag: {{ .Values.tag | quote }}
+{{- end }}
+{{- if .Values.dockerfile }}
+  dockerfile: {{ .Values.dockerfile | quote }}
 {{- end }}
   replicas: {{ default 1 .Values.replicas }}
 {{- if .Values.port }}

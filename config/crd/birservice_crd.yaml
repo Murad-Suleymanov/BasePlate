@@ -33,6 +33,9 @@ spec:
         - name: Available
           type: integer
           jsonPath: .status.availableReplicas
+        - name: Build
+          type: string
+          jsonPath: .status.buildStatus
       schema:
         openAPIV3Schema:
           type: object
@@ -51,6 +54,8 @@ spec:
                 repo:
                   type: string
                 tag:
+                  type: string
+                dockerfile:
                   type: string
                 replicas:
                   type: integer
@@ -74,4 +79,8 @@ spec:
                 availableReplicas:
                   type: integer
                   format: int32
+                buildImage:
+                  type: string
+                buildStatus:
+                  type: string
 
