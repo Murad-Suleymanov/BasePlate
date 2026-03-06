@@ -1,141 +1,256 @@
 # Easy-Deploy
 
-Easy-Deploy lets developers define a service in a **simple YAML file**, commit it to Git, and have it automatically deployed to Kubernetes with external DNS access.
+A Kubernetes-native platform that turns a **single-line YAML** into a fully deployed, HTTPS-enabled service with automatic DNS.
+
+```yaml
+repo: https://github.com/your-org/your-app
+```
+
+That's it. Within minutes, your app is live at `https://your-app-dev.easysolution.work` with TLS, DNS, and auto-scaling — zero Kubernetes knowledge required.
+
+---
+
+## Architecture
+
+```
+Developer                          Platform (Kubernetes)
+─────────                          ─────────────────────
+                                   ┌─────────────────────────────────┐
+ 1-line YAML ──► BasePlate-Dev ──► │  ArgoCD ApplicationSet          │
+                  (Git repo)       │       │                         │
+                                   │       ▼                         │
+                                   │  BirService CR                  │
+                                   │       │                         │
+                                   │       ▼                         │
+                                   │  Easy-Deploy Operator           │
+                                   │       │                         │
+                                   │  ┌────┴────────┐               │
+                                   │  │ Git repo?   │ Ready image?  │
+                                   │  ▼             ▼               │
+                                   │  Kaniko Job    Deployment      │
+                                   │  (build+push)  Service         │
+                                   │  ▼             HTTPRoute       │
+                                   │  Local Registry       │        │
+                                   │  ▼                    ▼        │
+                                   │  Deployment    ExternalDNS     │
+                                   │  Service       (Cloudflare)    │
+                                   │  HTTPRoute            │        │
+                                   │       │               ▼        │
+                                   │       ▼          DNS A Record  │
+                                   │  NGINX Gateway                 │
+                                   │  (TLS termination)             │
+                                   └─────────────────────────────────┘
+                                              │
+                                              ▼
+                                   https://app-ns.easysolution.work
+```
 
 ## How it works
 
-1. Developer commits a simple YAML to the catalog repo (`BasePlate-Dev`)
-2. ArgoCD `ApplicationSet` discovers it and creates a `BirService` Custom Resource
-3. The Easy-Deploy operator:
-   - **Ready image?** Creates `Deployment` + `Service` + `HTTPRoute`
-   - **Git repo?** Runs a Kaniko build Job → pushes to local registry → then deploys
-4. ExternalDNS reads the HTTPRoute and creates a Cloudflare DNS record
-5. Service is accessible at `https://<name>-<namespace>.easysolution.work`
+| Step | What happens | Who does it |
+|------|-------------|-------------|
+| 1 | Developer commits YAML to `BasePlate-Dev` repo | Developer |
+| 2 | ArgoCD discovers the file and creates a `BirService` CR | ArgoCD ApplicationSet |
+| 3a | If `image:` is set, creates Deployment + Service + HTTPRoute | Operator |
+| 3b | If `repo:` is a Git URL, runs Kaniko build, pushes to local registry, then deploys | Operator |
+| 4 | HTTPRoute is read by ExternalDNS, creates Cloudflare DNS record | ExternalDNS |
+| 5 | Wildcard TLS certificate covers all subdomains | cert-manager |
+| 6 | Service is live at `https://<name>-<namespace>.easysolution.work` | NGINX Gateway |
 
-## Repository structure
+---
 
-```
-BasePlate/                          # Platform repo
-├── api/v1alpha1/                   # Go types for BirService CRD
-├── cmd/operator/                   # Operator entrypoint
-├── cmd/easydeployctl/              # CLI tool (optional)
-├── internal/controller/            # Operator reconciliation logic
-├── charts/birservice/              # Helm chart (simple YAML → BirService CR)
-├── config/crd/                     # CRD definition (source of truth)
-├── manifests/                      # Platform manifests (synced by ArgoCD)
-│   ├── crd/                        # BirService CRD
-│   ├── operator/                   # Operator deployment, RBAC
-│   ├── gateway/                    # Gateway, ReferenceGrants, ClusterIssuer
-│   └── registry/                   # Local container registry
-├── argocd/                         # ArgoCD Application definitions
-│   ├── application-platform.yaml   # Platform manifests
-│   ├── applicationset-birservices.yaml  # Auto-discover developer YAMLs
-│   ├── application-gateway.yaml    # NGINX Gateway Fabric
-│   ├── application-cert-manager.yaml    # cert-manager (TLS)
-│   ├── application-monitoring.yaml # kube-prometheus-stack
-│   └── application-external-dns.yaml   # ExternalDNS (Cloudflare)
-├── Dockerfile                      # Operator container image
-└── .github/workflows/              # CI/CD
+## Developer YAML reference
 
-BasePlate-Dev/                      # Developer catalog repo
-└── tenants/<tenant>/simple-yaml/
-    └── <service>.yaml
-```
+Place YAML files in `BasePlate-Dev` repo at `tenants/<namespace>/simple-yaml/<name>.yaml`.
 
-## Simple YAML examples (developer writes only this)
+The **filename** becomes the service name. The **folder** becomes the namespace.
 
-In `BasePlate-Dev` repo: `tenants/dev/simple-yaml/<service>.yaml`
+### Minimal examples
 
-**Deploy a ready image (1 line):**
+**Deploy a container image:**
 
 ```yaml
 image: ealen/echo-server:0.9.2
 ```
 
-**Build from Git repo (1 line):**
+**Build and deploy from a Git repo:**
 
 ```yaml
-repo: https://github.com/user/myapp
+repo: https://github.com/docker/welcome-to-docker
 ```
 
-**With optional overrides:**
+### All available fields
 
 ```yaml
+# Image source (choose one)
+image: ""                    # Container image (e.g. nginx:latest)
+repo: ""                     # Git repo URL with Dockerfile
+
+# Build options (only for Git repos)
+tag: ""                      # Git branch/tag (default: repo's default branch)
+dockerfile: ""               # Path to Dockerfile (default: Dockerfile)
+
+# Runtime options
+port: 0                      # Service port (auto-detected from image, fallback: 8080)
+containerPort: 0             # Container port if different from service port
+replicas: 1                  # Number of pod replicas
+hostname: ""                 # Custom hostname (default: <name>-<namespace>.easysolution.work)
+```
+
+### Auto-detection
+
+| Field | Auto-detected from | Fallback |
+|-------|-------------------|----------|
+| `name` | Filename (`todo.yaml` → `todo`) | — |
+| `namespace` | Folder path (`tenants/staging/` → `staging`) | — |
+| `hostname` | `<name>-<namespace>.easysolution.work` | — |
+| `port` | Image `EXPOSE`, `ENV PORT=`, or `CMD --port` | 8080 |
+| `tag` | — | Repo default branch (Git) / `latest` (image) |
+
+---
+
+## Repository structure
+
+```
+BasePlate/                              # Platform repo (this repo)
+├── api/v1alpha1/                       # BirService CRD Go types
+│   ├── birservice_types.go             #   Spec + Status definitions
+│   ├── groupversion_info.go            #   API group registration
+│   └── zz_generated.deepcopy.go        #   Generated deep copy methods
+├── cmd/
+│   ├── operator/main.go                # Operator entrypoint + webhook server
+│   └── easydeployctl/main.go           # CLI tool (YAML → BirService converter)
+├── internal/
+│   ├── controller/                     # Reconciliation logic
+│   │   └── birservice_controller.go    #   Deployment, Service, HTTPRoute, Kaniko
+│   ├── registry/                       # Registry v2 API client
+│   │   └── inspect.go                  #   Port auto-detection from image config
+│   └── webhook/                        # GitHub webhook handler
+│       └── github.go                   #   Push event → rebuild trigger
+├── charts/birservice/                  # Helm chart: simple YAML → BirService CR
+│   ├── Chart.yaml
+│   ├── values.yaml
+│   └── templates/birservice.yaml
+├── config/crd/                         # CRD source of truth
+│   └── birservice_crd.yaml
+├── manifests/                          # Platform manifests (synced by ArgoCD)
+│   ├── crd/birservice_crd.yaml         #   BirService CRD
+│   ├── operator/                       #   Operator Deployment, RBAC, Webhook
+│   ├── gateway/                        #   NGINX Gateway, TLS, ClusterIssuers
+│   └── registry/                       #   Local container registry
+├── argocd/                             # ArgoCD Application definitions
+│   ├── application-platform.yaml       #   Platform manifests
+│   ├── applicationset-birservices.yaml #   Auto-discover developer YAMLs
+│   ├── application-gateway.yaml        #   NGINX Gateway Fabric
+│   ├── application-cert-manager.yaml   #   cert-manager
+│   ├── application-monitoring.yaml     #   Prometheus + Grafana
+│   └── application-external-dns.yaml   #   ExternalDNS (Cloudflare)
+├── Dockerfile                          # Multi-stage: Go builder → distroless
+├── .github/workflows/
+│   └── operator-image.yml              # CI: build + push operator image to GHCR
+├── go.mod / go.sum                     # Go dependencies
+└── install-*.sh                        # CRD installation scripts
+
+BasePlate-Dev/                          # Developer catalog repo (separate repo)
+└── tenants/
+    ├── dev/simple-yaml/
+    │   ├── echo.yaml                   # image: ealen/echo-server:0.9.2
+    │   └── welcome.yaml                # repo: https://github.com/docker/welcome-to-docker
+    ├── staging/simple-yaml/
+    │   └── todo-api.yaml               # repo: https://github.com/ganjbakhshali/todo_docker
+    └── preprod/simple-yaml/
+        └── hello-world.yaml            # repo: https://github.com/crccheck/docker-hello-world
+```
+
+---
+
+## Platform components
+
+| Component | Namespace | Purpose |
+|-----------|-----------|---------|
+| **Easy-Deploy Operator** | `easy-deploy-system` | Reconciles BirService CRs into Deployments, Services, HTTPRoutes, and Kaniko Jobs |
+| **NGINX Gateway Fabric** | `nginx-gateway` | Ingress gateway with HTTP/HTTPS listeners, TLS termination via wildcard cert |
+| **cert-manager** | `cert-manager` | Issues `*.easysolution.work` wildcard certificate via Let's Encrypt DNS-01 |
+| **ExternalDNS** | `external-dns` | Creates Cloudflare DNS A records from HTTPRoute resources |
+| **Local Registry** | `registry` | In-cluster Docker registry for Kaniko-built images (NodePort 30500) |
+| **ArgoCD** | `argocd` | GitOps engine: syncs all platform and developer manifests |
+| **Prometheus + Grafana** | `monitoring` | Cluster monitoring and dashboards |
+
+---
+
+## Build and rebuild
+
+### Git repo build flow
+
+When `repo:` contains a Git URL (GitHub, GitLab, Bitbucket):
+
+1. Operator creates a **Kaniko Job** that clones the repo, builds the Dockerfile, and pushes to the local registry
+2. After build succeeds, operator **inspects the image** to auto-detect the port
+3. Operator creates Deployment using the built image from `registry.registry.svc.cluster.local:5000/<name>:<tag>`
+
+### Tag-based rebuild
+
+Change the `tag` field in YAML → ArgoCD updates BirService → operator detects `status.BuildTag != spec.Tag` → deletes old Job → creates new build.
+
+```yaml
+# Before
+repo: https://github.com/user/myapp
+tag: v1.0.0
+
+# After (triggers rebuild)
 repo: https://github.com/user/myapp
 tag: v2.0.0
-port: 3000
-replicas: 3
-dockerfile: build/Dockerfile
 ```
 
-Everything else is automatic:
-- `name` = filename (`myapp.yaml` → `myapp`)
-- `namespace` = folder (`tenants/dev/` → `dev`)
-- `hostname` = `<name>-<namespace>.easysolution.work`
-- `port` = default 8080
-- `replicas` = default 1
-- `tag` = default `latest` (images) or `main` (git repos)
+### Webhook-based rebuild
+
+For automatic rebuilds when code is pushed (without changing YAML):
+
+1. Configure GitHub webhook: `https://webhook.easysolution.work/webhook/github`
+   - Content type: `application/json`
+   - Events: `push`
+2. When developer pushes to their repo, GitHub notifies the operator
+3. Operator annotates the matching BirService with `deploy.easydeploy.io/rebuild: <timestamp>`
+4. Reconciler detects the annotation change and triggers a new build
 
 ---
 
 ## One-time cluster setup
 
-These steps are performed **once** when setting up a new cluster. After this, no manual intervention is needed for new services.
+### Prerequisites
 
-### Step 1: Install Kubernetes
+- Kubernetes cluster (kubeadm, k3s, etc.) with 1+ master and 1+ worker nodes
+- A domain managed by Cloudflare (e.g. `easysolution.work`)
+- Cloudflare API token with **Zone:DNS:Edit** and **Zone:Zone:Read** permissions
 
-Set up a Kubernetes cluster (kubeadm, k3s, etc.) with at least 1 master + 1 worker node.
-
-### Step 2: Install ArgoCD
+### Step 1: Install ArgoCD
 
 ```bash
 kubectl create namespace argocd
 kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+kubectl -n argocd get pods  # wait until all pods are Running
 ```
 
-Wait for pods to be ready:
-
-```bash
-kubectl -n argocd get pods
-```
-
-Get ArgoCD admin password:
+Get admin password:
 
 ```bash
 kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
 ```
 
-### Step 3: Install local-path StorageClass
-
-Required for Prometheus/Alertmanager persistent storage:
+### Step 2: Install prerequisite CRDs
 
 ```bash
+# local-path StorageClass (for Prometheus persistent storage)
 kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.30/deploy/local-path-storage.yaml
-```
 
-### Step 4: Install Prometheus Operator CRDs
-
-These CRDs are too large for standard `kubectl apply`. Install manually:
-
-```bash
+# Prometheus Operator CRDs
 bash install-kube-prometheus-crds.sh
-```
 
-### Step 5: Install Gateway API CRDs
-
-Required before NGINX Gateway Fabric:
-
-```bash
+# Gateway API CRDs
 bash install-gateway-api-crds.sh
 ```
 
-### Step 6: Create Cloudflare API token secret
-
-Create a Cloudflare API token at https://dash.cloudflare.com/profile/api-tokens with permissions:
-- **Zone:DNS:Edit**
-- **Zone:Zone:Read**
-
-Then create the secrets (ExternalDNS and cert-manager both need it):
+### Step 3: Create Cloudflare secrets
 
 ```bash
 kubectl create ns external-dns
@@ -149,99 +264,161 @@ kubectl create secret generic cloudflare-api-token \
   --from-literal=cloudflare_api_token=YOUR_CLOUDFLARE_TOKEN
 ```
 
-### Step 7: Clone repo and apply ArgoCD applications
+### Step 4: Deploy platform
 
 ```bash
 git clone https://github.com/Murad-Suleymanov/BasePlate.git
 cd BasePlate
 
-# Platform (CRD, operator, gateway, registry)
 kubectl apply -n argocd -f argocd/application-platform.yaml
-
-# Developer service auto-discovery
 kubectl apply -n argocd -f argocd/applicationset-birservices.yaml
-
-# NGINX Gateway Fabric
 kubectl apply -n argocd -f argocd/application-gateway.yaml
-
-# cert-manager (TLS certificates)
 kubectl apply -n argocd -f argocd/application-cert-manager.yaml
-
-# Monitoring (Prometheus + Grafana)
 kubectl apply -n argocd -f argocd/application-monitoring.yaml
-
-# ExternalDNS (Cloudflare automatic DNS)
 kubectl apply -n argocd -f argocd/application-external-dns.yaml
 ```
 
-### Step 8: Verify
+### Step 5: Configure worker node
+
+On each **worker node**, configure containerd to pull from the insecure local registry and resolve Kubernetes service DNS:
 
 ```bash
-# All ArgoCD apps synced?
-kubectl -n argocd get applications
+# DNS: forward cluster.local queries to CoreDNS
+mkdir -p /etc/systemd/resolved.conf.d
+cat > /etc/systemd/resolved.conf.d/cluster-local.conf <<'EOF'
+[Resolve]
+DNS=10.96.0.10
+Domains=~svc.cluster.local
+EOF
+systemctl restart systemd-resolved
 
-# Operator running?
-kubectl -n easy-deploy-system get pods
+# containerd: allow insecure local registry
+mkdir -p /etc/containerd/certs.d/registry.registry.svc.cluster.local:5000
+cat > /etc/containerd/certs.d/registry.registry.svc.cluster.local:5000/hosts.toml <<'EOF'
+server = "http://registry.registry.svc.cluster.local:5000"
 
-# Gateway running?
-kubectl -n nginx-gateway get pods
+[host."http://registry.registry.svc.cluster.local:5000"]
+  capabilities = ["pull", "resolve", "push"]
+  skip_verify = true
+EOF
 
-# ExternalDNS running?
-kubectl -n external-dns get pods
+sed -i 's|config_path = ""|config_path = "/etc/containerd/certs.d"|' /etc/containerd/config.toml
+systemctl restart containerd
+```
 
-# Monitoring running?
-kubectl -n monitoring get pods
+### Step 6: Verify
+
+```bash
+kubectl -n argocd get applications          # All Synced + Healthy?
+kubectl -n easy-deploy-system get pods      # Operator running?
+kubectl -n nginx-gateway get pods           # Gateway running?
+kubectl -n external-dns get pods            # ExternalDNS running?
+kubectl -n cert-manager get pods            # cert-manager running?
+kubectl -n registry get pods                # Registry running?
+kubectl -n monitoring get pods              # Prometheus + Grafana running?
 ```
 
 ---
-
-## After setup: adding a new service
-
-Developer simply commits a YAML to `BasePlate-Dev` repo. No other steps needed:
-
-```yaml
-image: nginxdemos/hello:plain-text
-```
-
-Within ~2 minutes: `https://<name>-<namespace>.easysolution.work` is live with HTTPS.
-
-For Git repos with a Dockerfile:
-
-```yaml
-repo: https://github.com/user/myapp
-```
-
-Within ~3 minutes: Kaniko builds the image, pushes to local registry, and deploys.
 
 ## Configuration
 
 The operator reads these environment variables from `manifests/operator/deployment.yaml`:
 
 | Variable | Description | Default |
-|---|---|---|
+|----------|-------------|---------|
 | `BASE_DOMAIN` | Auto-generated hostname suffix | `easysolution.work` |
-| `TARGET_IP` | IP for DNS A records (worker node public IP) | `116.203.203.121` |
+| `TARGET_IP` | Public IP for DNS A records (worker node) | `116.203.203.121` |
 
-## Access ArgoCD UI
+---
 
-From your local machine, SSH tunnel + port-forward:
+## Troubleshooting
+
+### Service not accessible
+
+```bash
+# Check BirService status
+kubectl -n <namespace> get birservice
+
+# Check build job (for Git repos)
+kubectl -n <namespace> get jobs
+kubectl -n <namespace> logs job/<name>-build-latest
+
+# Check pod status
+kubectl -n <namespace> get pods
+kubectl -n <namespace> logs deploy/<name>-deploy
+
+# Check HTTPRoute acceptance
+kubectl -n <namespace> get httproute <name>-route -o jsonpath='{.status.parents[0].conditions}' | python3 -m json.tool
+
+# Check DNS
+dig <name>-<namespace>.easysolution.work @1.1.1.1
+
+# Check operator logs
+kubectl -n easy-deploy-system logs deployment/easy-deploy-operator --tail=30
+```
+
+### Build failed
+
+```bash
+# Check Kaniko job logs
+kubectl -n <namespace> logs job/<name>-build-latest
+
+# Common issues:
+# - "reference not found" → wrong branch/tag, specify tag: in YAML
+# - "MANIFEST_UNKNOWN" → Dockerfile error
+# - ImagePullBackOff → worker node containerd not configured for insecure registry
+```
+
+### Port mismatch (502 Bad Gateway)
+
+```bash
+# Check what port the service uses
+kubectl -n <namespace> get svc <name>-svc -o jsonpath='{.spec.ports}' ; echo
+
+# Check what port the container actually listens on
+kubectl -n <namespace> logs deploy/<name>-deploy --tail=5
+
+# Fix: add explicit port in YAML
+# port: 3000
+```
+
+---
+
+## Access UIs
+
+### ArgoCD
 
 ```bash
 ssh -L 18080:localhost:18080 root@<MASTER_NODE_IP>
-# Then on the VPS:
 kubectl port-forward svc/argocd-server -n argocd 18080:443
 ```
 
-Open https://localhost:18080 in your browser. Username: `admin`, password from Step 2.
+Open https://localhost:18080 — Username: `admin`, password from Step 1.
 
-## Access Grafana
+### Grafana
 
 ```bash
-# Get password
 kubectl -n monitoring get secret monitoring-grafana -o jsonpath='{.data.admin-password}' | base64 -d; echo
-
-# Port-forward
 kubectl -n monitoring port-forward svc/monitoring-grafana 13000:80
 ```
 
-Open http://localhost:13000. Username: `admin`.
+Open http://localhost:13000 — Username: `admin`.
+
+---
+
+## Tech stack
+
+| Technology | Role |
+|-----------|------|
+| Go + controller-runtime | Custom operator |
+| Kaniko | In-cluster container image builds |
+| NGINX Gateway Fabric | Gateway API ingress controller |
+| cert-manager + Let's Encrypt | Wildcard TLS certificates (DNS-01) |
+| ExternalDNS + Cloudflare | Automatic DNS record management |
+| ArgoCD | GitOps continuous deployment |
+| Prometheus + Grafana | Monitoring and dashboards |
+| Docker Registry v2 | Local container image storage |
+
+## License
+
+MIT
