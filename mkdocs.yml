@@ -1,6 +1,6 @@
 site_name: Easy-Deploy
 site_description: A Kubernetes-native platform that turns a single-line YAML into a fully deployed, HTTPS-enabled service with automatic DNS.
-site_url: https://easy-deploy.readthedocs.io/
+site_url: https://easy-deploy-platform.readthedocs.io/
 repo_name: Murad-Suleymanov/BasePlate
 repo_url: https://github.com/Murad-Suleymanov/BasePlate
 
