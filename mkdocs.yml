@@ -1,0 +1,123 @@
+site_name: Easy-Deploy
+site_description: A Kubernetes-native platform that turns a single-line YAML into a fully deployed, HTTPS-enabled service with automatic DNS.
+site_url: https://easy-deploy.readthedocs.io/
+repo_name: Murad-Suleymanov/BasePlate
+repo_url: https://github.com/Murad-Suleymanov/BasePlate
+
+theme:
+  name: material
+  language: en
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/kubernetes
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - toc.follow
+
+plugins:
+  - search
+  - minify:
+      minify_html: true
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.mark
+  - pymdownx.tilde
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.smartsymbols
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - toc:
+      permalink: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Murad-Suleymanov/BasePlate
+  generator: false
+
+copyright: Copyright &copy; 2025–2026 Easy-Deploy Contributors
+
+nav:
+  - Home:
+      - index.md
+  - Getting Started:
+      - getting-started/index.md
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quickstart.md
+      - First Deployment: getting-started/first-deployment.md
+  - Architecture:
+      - architecture/index.md
+      - Operator: architecture/operator.md
+      - Build Pipeline: architecture/build-pipeline.md
+      - Networking & TLS: architecture/networking.md
+  - User Guide:
+      - user-guide/index.md
+      - YAML Reference: user-guide/yaml-reference.md
+      - Deploying Images: user-guide/deploying-images.md
+      - Deploying from Git: user-guide/deploying-from-git.md
+      - Rebuild Strategies: user-guide/rebuild-strategies.md
+      - Port Auto-Detection: user-guide/auto-detection.md
+  - Admin Guide:
+      - admin-guide/index.md
+      - Cluster Setup: admin-guide/cluster-setup.md
+      - Worker Node Configuration: admin-guide/worker-node-config.md
+      - DNS & TLS Setup: admin-guide/dns-tls-setup.md
+      - Monitoring: admin-guide/monitoring.md
+  - Reference:
+      - reference/index.md
+      - CRD Reference: reference/crd-reference.md
+      - Configuration: reference/configuration.md
+      - CLI Tool: reference/cli.md
+      - Troubleshooting: reference/troubleshooting.md
