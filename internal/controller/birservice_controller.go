@@ -3,7 +3,9 @@ package controller
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -11,6 +13,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -25,8 +28,12 @@ import (
 )
 
 const (
-	registryURL = "registry.registry.svc.cluster.local:5000"
-	kanikoImage = "gcr.io/kaniko-project/executor:latest"
+	registryURL    = "registry.registry.svc.cluster.local:5000"
+	kanikoImage    = "gcr.io/kaniko-project/executor:latest"
+	labelBuildTag  = "deploy.easydeploy.io/build-tag"
+	labelPurpose   = "deploy.easydeploy.io/purpose"
+	annotRebuild   = "deploy.easydeploy.io/rebuild"
+	requeueBuild   = 10 * time.Second
 )
 
 type BirServiceReconciler struct {
@@ -169,6 +176,7 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 
 // reconcileBuild handles Git-based repos: creates a Kaniko build Job, waits for
 // completion, then deploys the built image from the local registry.
+// It detects tag changes and rebuild annotations to trigger new builds.
 func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Request, bs *deployv1alpha1.BirService) (ctrl.Result, error) {
 	l := log.FromContext(ctx)
 
@@ -177,8 +185,17 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 		tag = "main"
 	}
 	buildImage := fmt.Sprintf("%s/%s:%s", registryURL, bs.Name, tag)
-	jobName := fmt.Sprintf("%s-build", bs.Name)
 
+	needsRebuild := r.needsRebuild(bs, tag)
+
+	if needsRebuild {
+		l.Info("rebuild triggered, cleaning old build jobs", "tag", tag)
+		if err := r.deleteOldBuildJobs(ctx, bs); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	jobName := fmt.Sprintf("%s-build-%s", bs.Name, sanitizeK8sName(tag))
 	var job batchv1.Job
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: bs.Namespace}, &job)
 
@@ -207,7 +224,8 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 				Labels: map[string]string{
 					"app.kubernetes.io/name":       bs.Name,
 					"app.kubernetes.io/managed-by": "easy-deploy-operator",
-					"deploy.easydeploy.io/purpose": "build",
+					labelPurpose:                   "build",
+					labelBuildTag:                  tag,
 				},
 			},
 			Spec: batchv1.JobSpec{
@@ -234,16 +252,15 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, err
 		}
 
-		return r.updateBuildStatus(ctx, req, bs, buildImage, "Building")
+		return r.updateBuildStatus(ctx, req, bs, buildImage, "Building", tag)
 	}
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// Job exists — check status.
 	if job.Status.Succeeded > 0 {
-		if bs.Status.BuildStatus != "Succeeded" {
-			if _, err := r.updateBuildStatus(ctx, req, bs, buildImage, "Succeeded"); err != nil {
+		if bs.Status.BuildStatus != "Succeeded" || bs.Status.BuildTag != tag {
+			if _, err := r.updateBuildStatus(ctx, req, bs, buildImage, "Succeeded", tag); err != nil {
 				return ctrl.Result{}, err
 			}
 		}
@@ -253,14 +270,48 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 
 	if job.Status.Failed > 0 {
 		l.Error(nil, "build job failed", "job", jobName)
-		return r.updateBuildStatus(ctx, req, bs, buildImage, "Failed")
+		return r.updateBuildStatus(ctx, req, bs, buildImage, "Failed", tag)
 	}
 
 	l.Info("build job still running", "job", jobName)
-	return ctrl.Result{RequeueAfter: 10 * 1e9}, nil // requeue after 10s
+	return ctrl.Result{RequeueAfter: requeueBuild}, nil
 }
 
-func (r *BirServiceReconciler) updateBuildStatus(ctx context.Context, req ctrl.Request, bs *deployv1alpha1.BirService, image, status string) (ctrl.Result, error) {
+func (r *BirServiceReconciler) needsRebuild(bs *deployv1alpha1.BirService, desiredTag string) bool {
+	if bs.Status.BuildTag != "" && bs.Status.BuildTag != desiredTag {
+		return true
+	}
+	rebuildAnnot := bs.Annotations[annotRebuild]
+	if rebuildAnnot != "" && rebuildAnnot != bs.Status.LastRebuild {
+		return true
+	}
+	return false
+}
+
+func (r *BirServiceReconciler) deleteOldBuildJobs(ctx context.Context, bs *deployv1alpha1.BirService) error {
+	sel, _ := labels.Parse(fmt.Sprintf(
+		"app.kubernetes.io/name=%s,%s=build",
+		bs.Name, labelPurpose,
+	))
+	var jobList batchv1.JobList
+	if err := r.List(ctx, &jobList, &client.ListOptions{
+		Namespace:     bs.Namespace,
+		LabelSelector: sel,
+	}); err != nil {
+		return err
+	}
+	bg := metav1.DeletePropagationBackground
+	for i := range jobList.Items {
+		if err := r.Delete(ctx, &jobList.Items[i], &client.DeleteOptions{
+			PropagationPolicy: &bg,
+		}); client.IgnoreNotFound(err) != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *BirServiceReconciler) updateBuildStatus(ctx context.Context, req ctrl.Request, bs *deployv1alpha1.BirService, image, status, tag string) (ctrl.Result, error) {
 	return ctrl.Result{}, retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		var latest deployv1alpha1.BirService
 		if err := r.Get(ctx, req.NamespacedName, &latest); err != nil {
@@ -268,8 +319,24 @@ func (r *BirServiceReconciler) updateBuildStatus(ctx context.Context, req ctrl.R
 		}
 		latest.Status.BuildImage = image
 		latest.Status.BuildStatus = status
+		latest.Status.BuildTag = tag
+		if ann := latest.Annotations[annotRebuild]; ann != "" {
+			latest.Status.LastRebuild = ann
+		}
 		return r.Status().Update(ctx, &latest)
 	})
+}
+
+var k8sNameRegex = regexp.MustCompile(`[^a-z0-9-]`)
+
+func sanitizeK8sName(s string) string {
+	s = strings.ToLower(s)
+	s = k8sNameRegex.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	if len(s) > 48 {
+		s = s[:48]
+	}
+	return s
 }
 
 func (r *BirServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {

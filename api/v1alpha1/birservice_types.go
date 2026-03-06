@@ -39,6 +39,8 @@ type BirServiceStatus struct {
 	AvailableReplicas int32  `json:"availableReplicas,omitempty"`
 	BuildImage        string `json:"buildImage,omitempty"`
 	BuildStatus       string `json:"buildStatus,omitempty"`
+	BuildTag          string `json:"buildTag,omitempty"`
+	LastRebuild       string `json:"lastRebuild,omitempty"`
 }
 
 // +kubebuilder:object:root=true

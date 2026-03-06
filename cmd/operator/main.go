@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
 
@@ -13,6 +14,7 @@ import (
 
 	deployv1alpha1 "easy-deploy/api/v1alpha1"
 	"easy-deploy/internal/controller"
+	"easy-deploy/internal/webhook"
 )
 
 var scheme = runtime.NewScheme()
@@ -25,9 +27,11 @@ func init() {
 func main() {
 	var metricsAddr string
 	var healthAddr string
+	var webhookAddr string
 	var leaderElect bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&healthAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	flag.StringVar(&webhookAddr, "webhook-bind-address", ":9090", "The address the GitHub webhook server binds to.")
 	flag.BoolVar(&leaderElect, "leader-elect", false, "Enable leader election for controller manager.")
 
 	opts := zap.Options{Development: true}
@@ -73,8 +77,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	ctx := ctrl.SetupSignalHandler()
+
+	go func() {
+		wh := &webhook.GitHubHandler{Client: mgr.GetClient()}
+		if err := webhook.StartServer(context.WithValue(ctx, struct{}{}, nil), webhookAddr, wh); err != nil {
+			ctrl.Log.Error(err, "webhook server failed")
+		}
+	}()
+
 	ctrl.Log.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		ctrl.Log.Error(err, "problem running manager")
 		os.Exit(1)
 	}

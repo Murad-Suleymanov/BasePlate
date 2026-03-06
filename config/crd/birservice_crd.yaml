@@ -83,4 +83,8 @@ spec:
                   type: string
                 buildStatus:
                   type: string
+                buildTag:
+                  type: string
+                lastRebuild:
+                  type: string
 
