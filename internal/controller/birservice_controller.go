@@ -182,21 +182,22 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 	l := log.FromContext(ctx)
 
 	tag := bs.Spec.Tag
-	if tag == "" {
-		tag = "main"
+	imageTag := tag
+	if imageTag == "" {
+		imageTag = "latest"
 	}
-	buildImage := fmt.Sprintf("%s/%s:%s", registryURL, bs.Name, tag)
+	buildImage := fmt.Sprintf("%s/%s:%s", registryURL, bs.Name, imageTag)
 
-	needsRebuild := r.needsRebuild(bs, tag)
+	needsRebuild := r.needsRebuild(bs, imageTag)
 
 	if needsRebuild {
-		l.Info("rebuild triggered, cleaning old build jobs", "tag", tag)
+		l.Info("rebuild triggered, cleaning old build jobs", "tag", imageTag)
 		if err := r.deleteOldBuildJobs(ctx, bs); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
 
-	jobName := fmt.Sprintf("%s-build-%s", bs.Name, sanitizeK8sName(tag))
+	jobName := fmt.Sprintf("%s-build-%s", bs.Name, sanitizeK8sName(imageTag))
 	var job batchv1.Job
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: bs.Namespace}, &job)
 
@@ -208,7 +209,13 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 			dockerfile = "Dockerfile"
 		}
 
-		gitContext := fmt.Sprintf("git://%s#refs/heads/%s", strings.TrimPrefix(bs.Spec.Repo, "https://"), tag)
+		repoPath := strings.TrimPrefix(bs.Spec.Repo, "https://")
+		var gitContext string
+		if tag != "" {
+			gitContext = fmt.Sprintf("git://%s#refs/heads/%s", repoPath, tag)
+		} else {
+			gitContext = fmt.Sprintf("git://%s", repoPath)
+		}
 
 		args := []string{
 			"--context=" + gitContext,
@@ -253,21 +260,21 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, err
 		}
 
-		return r.updateBuildStatus(ctx, req, bs, buildImage, "Building", tag)
+		return r.updateBuildStatus(ctx, req, bs, buildImage, "Building", imageTag)
 	}
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
 	if job.Status.Succeeded > 0 {
-		if bs.Status.BuildStatus != "Succeeded" || bs.Status.BuildTag != tag {
-			if _, err := r.updateBuildStatus(ctx, req, bs, buildImage, "Succeeded", tag); err != nil {
+		if bs.Status.BuildStatus != "Succeeded" || bs.Status.BuildTag != imageTag {
+			if _, err := r.updateBuildStatus(ctx, req, bs, buildImage, "Succeeded", imageTag); err != nil {
 				return ctrl.Result{}, err
 			}
 		}
 
 		if bs.Spec.Port == nil || *bs.Spec.Port == 0 {
-			if detected := registry.InspectPort(registryURL, bs.Name, tag); detected > 0 {
+			if detected := registry.InspectPort(registryURL, bs.Name, imageTag); detected > 0 {
 				l.Info("auto-detected port from image EXPOSE", "port", detected)
 				port := detected
 				bs.Spec.Port = &port
@@ -280,7 +287,7 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 
 	if job.Status.Failed > 0 {
 		l.Error(nil, "build job failed", "job", jobName)
-		return r.updateBuildStatus(ctx, req, bs, buildImage, "Failed", tag)
+		return r.updateBuildStatus(ctx, req, bs, buildImage, "Failed", imageTag)
 	}
 
 	l.Info("build job still running", "job", jobName)
