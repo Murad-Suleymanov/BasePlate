@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	deployv1alpha1 "easy-deploy/api/v1alpha1"
+	"easy-deploy/internal/registry"
 )
 
 const (
@@ -264,6 +265,15 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 				return ctrl.Result{}, err
 			}
 		}
+
+		if bs.Spec.Port == nil || *bs.Spec.Port == 0 {
+			if detected := registry.InspectPort(registryURL, bs.Name, tag); detected > 0 {
+				l.Info("auto-detected port from image EXPOSE", "port", detected)
+				port := detected
+				bs.Spec.Port = &port
+			}
+		}
+
 		l.Info("build succeeded, deploying", "image", buildImage)
 		return r.reconcileDeployment(ctx, req, bs, buildImage)
 	}
