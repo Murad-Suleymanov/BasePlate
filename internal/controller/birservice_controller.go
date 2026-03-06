@@ -233,7 +233,7 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 					"app.kubernetes.io/name":       bs.Name,
 					"app.kubernetes.io/managed-by": "easy-deploy-operator",
 					labelPurpose:                   "build",
-					labelBuildTag:                  tag,
+					labelBuildTag:                  imageTag,
 				},
 			},
 			Spec: batchv1.JobSpec{
