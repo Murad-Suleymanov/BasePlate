@@ -26,6 +26,7 @@ type imageConfig struct {
 
 type containerConfig struct {
 	ExposedPorts map[string]struct{} `json:"ExposedPorts"`
+	Env          []string            `json:"Env"`
 }
 
 // InspectPort queries the registry v2 API and returns the first EXPOSE port
@@ -37,7 +38,7 @@ func InspectPort(registryHost, name, tag string) int32 {
 	if err != nil {
 		return 0
 	}
-	req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
+	req.Header.Set("Accept", "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json")
 
 	resp, err := httpClient.Do(req)
 	if err != nil || resp.StatusCode != 200 {
@@ -76,6 +77,15 @@ func InspectPort(registryHost, name, tag string) int32 {
 		port := strings.Split(portSpec, "/")[0]
 		if p, err := strconv.Atoi(port); err == nil && p > 0 {
 			return int32(p)
+		}
+	}
+
+	for _, env := range cfg.Config.Env {
+		if strings.HasPrefix(env, "PORT=") {
+			val := strings.TrimPrefix(env, "PORT=")
+			if p, err := strconv.Atoi(val); err == nil && p > 0 {
+				return int32(p)
+			}
 		}
 	}
 
