@@ -33,7 +33,7 @@ spec:
           ref: values
       destination:
         server: https://kubernetes.default.svc
-        namespace: '{{ default (index (splitList "/" .path.path) 1) .namespace }}'
+        namespace: '{{ index (splitList "/" .path.path) 1 }}'
       syncPolicy:
         automated:
           prune: true
