@@ -397,12 +397,14 @@ Open https://localhost:18080 — Username: `admin`, password from Step 1.
 
 ### Grafana
 
+Public URL: **https://grafana.easysolution.work**
+
 ```bash
+# Get password
 kubectl -n monitoring get secret monitoring-grafana -o jsonpath='{.data.admin-password}' | base64 -d; echo
-kubectl -n monitoring port-forward svc/monitoring-grafana 13000:80
 ```
 
-Open http://localhost:13000 — Username: `admin`.
+Username: `admin`.
 
 ---
 

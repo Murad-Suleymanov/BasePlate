@@ -14,13 +14,11 @@ Easy-Deploy includes Prometheus and Grafana for cluster monitoring, deployed via
 
 ## Accessing Grafana
 
-### Port Forward
+### Public URL
 
-```bash
-kubectl -n monitoring port-forward svc/monitoring-grafana 13000:80
-```
+Grafana is exposed publicly via the NGINX Gateway:
 
-Open [http://localhost:13000](http://localhost:13000).
+**https://grafana.easysolution.work**
 
 ### Credentials
 
@@ -31,7 +29,17 @@ kubectl -n monitoring get secret monitoring-grafana \
   -o jsonpath='{.data.admin-password}' | base64 -d; echo
 ```
 
-### SSH Tunnel (Remote Cluster)
+### Port Forward (Alternative)
+
+If you prefer local-only access:
+
+```bash
+kubectl -n monitoring port-forward svc/monitoring-grafana 13000:80
+```
+
+Open [http://localhost:13000](http://localhost:13000).
+
+### SSH Tunnel (Alternative)
 
 ```bash
 # From your local machine
