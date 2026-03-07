@@ -14,4 +14,5 @@ resources:
   - gateway/gateway.yaml
   - gateway/reference-grants.yaml
   - gateway/cluster-issuer.yaml
+  - gateway/grafana-route.yaml
 
