@@ -28,6 +28,11 @@ spec:
 
         grafana:
           enabled: true
+          adminPassword: EasyDeploy2026!
+          persistence:
+            enabled: true
+            storageClassName: local-path
+            size: 2Gi
 
         prometheus:
           enabled: true
