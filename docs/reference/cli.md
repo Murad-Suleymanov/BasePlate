@@ -17,7 +17,7 @@ The CLI tool bridges the gap between the simplified developer YAML and the actua
 go build -o easydeployctl ./cmd/easydeployctl
 
 # Convert a simple YAML to a BirService CR
-./easydeployctl -f tenants/dev/simple-yaml/echo.yaml
+./easydeployctl -f echo/dev.yaml
 
 # Pipe to kubectl
 ./easydeployctl -f echo.yaml | kubectl apply -f -
@@ -52,9 +52,9 @@ spec:
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `-f` | Path to the input YAML file | (required) |
-| `-n` | Namespace override | Derived from path |
-| `--name` | Service name override | Derived from filename |
+| `-f` | Path to the input YAML file (e.g. api/prod.yaml) | (required) |
+| `-n` | Namespace override | Derived from filename (prod.yaml → prod) |
+| `--name` | Service name override | Derived from folder (api/ → api) |
 
 ## Building from Source
 

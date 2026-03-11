@@ -32,14 +32,13 @@ spec:
 {{- if ne (default true .Values.expose) true }}
   expose: false
 {{- end }}
-{{- if .Values.metrics }}
-{{- if eq (kindOf .Values.metrics) "map" }}
-  metrics:
-    enabled: {{ default true .Values.metrics.enabled }}
-    path: {{ default "/metrics" .Values.metrics.path | quote }}
-{{- else if .Values.metrics }}
+{{- /* Metrics default true - hər komponent metrik yığır; metrics: false ilə söndürülür */}}
+{{- if or (and (eq (kindOf .Values.metrics) "bool") .Values.metrics) (and (eq (kindOf .Values.metrics) "map") (ne false .Values.metrics.enabled)) }}
   metrics:
     enabled: true
+{{- if eq (kindOf .Values.metrics) "map" }}
+    path: {{ default "/metrics" .Values.metrics.path | quote }}
+{{- else }}
     path: "/metrics"
 {{- end }}
 {{- end }}

@@ -67,7 +67,7 @@ graph TB
 | Component | Responsibility |
 |-----------|---------------|
 | **ArgoCD** | Watches Git repositories and keeps cluster state in sync |
-| **ApplicationSet** | Auto-discovers `tenants/*/simple-yaml/*.yaml` files and creates ArgoCD Applications |
+| **ApplicationSet** | Auto-discovers `*/*.yaml` (service_name/namespace_name.yaml) files and creates ArgoCD Applications |
 | **Helm Chart** | Converts the developer's simple YAML into a `BirService` custom resource |
 
 ### Control Plane

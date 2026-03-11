@@ -5,11 +5,11 @@ This is the complete reference for the developer YAML format used by Easy-Deploy
 ## File Location
 
 ```
-BasePlate-Dev/tenants/<namespace>/simple-yaml/<name>.yaml
+BasePlate-Dev/<service_name>/<namespace_name>.yaml
 ```
 
-- `<namespace>` — the Kubernetes namespace (e.g., `dev`, `staging`, `preprod`)
-- `<name>` — the service name (derived from the filename without `.yaml`)
+- `<service_name>` — the service name (folder name)
+- `<namespace_name>` — the Kubernetes namespace (filename without `.yaml`, e.g., `dev`, `prod`, `stage`)
 
 ## Minimal Examples
 
@@ -180,8 +180,8 @@ Several fields are automatically derived if not specified:
 
 | Field | Auto-Detected From | Fallback |
 |-------|-------------------|----------|
-| `name` | Filename (`echo.yaml` → `echo`) | — |
-| `namespace` | Folder path (`tenants/staging/` → `staging`) | — |
+| `name` | Folder path (`api/` → `api`) | — |
+| `namespace` | Filename (`prod.yaml` → `prod`) | — |
 | `hostname` | `<name>-<namespace>.easysolution.work` | — |
 | `port` | Image `EXPOSE`, `ENV PORT=`, or `CMD --port` | `8080` |
 | `tag` | — | Repo default branch (Git) / `latest` (image) |
@@ -190,14 +190,14 @@ Several fields are automatically derived if not specified:
 
 ### Simple Web Server
 
-```yaml title="tenants/dev/simple-yaml/web.yaml"
+```yaml title="web/dev.yaml"
 image: nginx:alpine
 port: 80
 ```
 
 ### Git-Based API with Custom Tag
 
-```yaml title="tenants/staging/simple-yaml/api.yaml"
+```yaml title="api/stage.yaml"
 repo: https://github.com/your-org/api-service
 tag: v3.1.0
 replicas: 2
@@ -205,7 +205,7 @@ replicas: 2
 
 ### Monorepo Microservice
 
-```yaml title="tenants/preprod/simple-yaml/auth.yaml"
+```yaml title="auth/preprod.yaml"
 repo: https://github.com/your-org/platform
 dockerfile: services/auth/Dockerfile
 tag: release/2.0
@@ -215,7 +215,7 @@ replicas: 3
 
 ### Custom Domain
 
-```yaml title="tenants/prod/simple-yaml/frontend.yaml"
+```yaml title="frontend/prod.yaml"
 image: ghcr.io/your-org/frontend:latest
 hostname: app.yourcompany.com
 port: 3000

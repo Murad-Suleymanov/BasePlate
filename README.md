@@ -61,9 +61,11 @@ Developer                          Platform (Kubernetes)
 
 ## Developer YAML reference
 
-Place YAML files in `BasePlate-Dev` repo at `tenants/<namespace>/simple-yaml/<name>.yaml`.
+Place YAML files in `BasePlate-Dev` repo at `<service_name>/<namespace_name>.yaml`.
 
-The **filename** becomes the service name. The **folder** becomes the namespace.
+The **folder** becomes the service name. The **filename** (without `.yaml`) becomes the namespace.
+
+Example: `api/prod.yaml` → service `api` in namespace `prod`.
 
 ### Minimal examples
 
@@ -101,8 +103,8 @@ hostname: ""                 # Custom hostname (default: <name>-<namespace>.easy
 
 | Field | Auto-detected from | Fallback |
 |-------|-------------------|----------|
-| `name` | Filename (`todo.yaml` → `todo`) | — |
-| `namespace` | Folder path (`tenants/staging/` → `staging`) | — |
+| `name` | Folder path (`api/` → `api`) | — |
+| `namespace` | Filename (`prod.yaml` → `prod`) | — |
 | `hostname` | `<name>-<namespace>.easysolution.work` | — |
 | `port` | Image `EXPOSE`, `ENV PORT=`, or `CMD --port` | 8080 |
 | `tag` | — | Repo default branch (Git) / `latest` (image) |
@@ -117,7 +119,7 @@ The platform spans three Git repositories:
 |------|---------|
 | **[BasePlate](https://github.com/Murad-Suleymanov/BasePlate)** (this) | Go operator, CRD, Helm chart, operator manifests |
 | **[BasePlate-Infra](https://github.com/Murad-Suleymanov/BasePlate-Infra)** | ArgoCD apps, gateway/registry/webhook manifests, install scripts |
-| **[BasePlate-Dev](https://github.com/Murad-Suleymanov/BasePlate-Dev)** | Developer YAML files (`tenants/*/simple-yaml/*.yaml`) |
+| **[BasePlate-Dev](https://github.com/Murad-Suleymanov/BasePlate-Dev)** | Developer YAML files (`*/*.yaml` = `service_name/namespace_name.yaml`) |
 
 ```
 BasePlate/                              # Platform repo (this repo)
@@ -169,14 +171,14 @@ BasePlate-Infra/                        # Infrastructure repo
 └── verify-kube-prometheus-stack.sh     # Verify monitoring stack health
 
 BasePlate-Dev/                          # Developer catalog repo
-└── tenants/
-    ├── dev/simple-yaml/
-    │   ├── echo.yaml                   # image: ealen/echo-server:0.9.2
-    │   └── welcome.yaml                # repo: https://github.com/docker/welcome-to-docker
-    ├── staging/simple-yaml/
-    │   └── todo-api.yaml               # repo: https://github.com/ganjbakhshali/todo_docker
-    └── preprod/simple-yaml/
-        └── hello-world.yaml            # repo: https://github.com/crccheck/docker-hello-world
+├── echo/                               # service_name = folder
+│   ├── dev.yaml                        # namespace = filename
+│   └── prod.yaml
+├── api/
+│   ├── dev.yaml
+│   └── stage.yaml
+└── welcome/
+    └── dev.yaml                        # repo: https://github.com/docker/welcome-to-docker
 ```
 
 ---

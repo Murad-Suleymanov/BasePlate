@@ -9,7 +9,7 @@ Deploy a pre-built container image in under 5 minutes.
 
 ## Deploy an Echo Server
 
-**1.** Create a file at `tenants/dev/simple-yaml/echo.yaml` in the BasePlate-Dev repo:
+**1.** Create a file at `echo/dev.yaml` in the BasePlate-Dev repo:
 
 ```yaml
 image: ealen/echo-server:0.9.2
@@ -18,7 +18,7 @@ image: ealen/echo-server:0.9.2
 **2.** Commit and push:
 
 ```bash
-git add tenants/dev/simple-yaml/echo.yaml
+git add echo/dev.yaml
 git commit -m "deploy echo server to dev"
 git push
 ```
@@ -37,10 +37,10 @@ https://echo-dev.easysolution.work
 ```
 
 !!! info "How the URL is Generated"
-    The URL follows the pattern `<filename>-<folder>.easysolution.work`:
+    The URL follows the pattern `<service>-<namespace>.easysolution.work`:
 
-    - Filename: `echo.yaml` → `echo`
-    - Folder: `tenants/dev/` → `dev`
+    - Folder: `echo/` → service name `echo`
+    - Filename: `dev.yaml` → namespace `dev`
     - Result: `echo-dev.easysolution.work`
 
 ## What Just Happened?
@@ -66,7 +66,7 @@ sequenceDiagram
 
 The platform:
 
-1. ArgoCD discovered `tenants/dev/simple-yaml/echo.yaml` through the ApplicationSet
+1. ArgoCD discovered `echo/dev.yaml` through the ApplicationSet
 2. Rendered it through the Helm chart into a `BirService` custom resource
 3. The operator reconciled the CR into a Deployment, Service, and HTTPRoute
 4. ExternalDNS created a DNS A record on Cloudflare
@@ -76,7 +76,7 @@ The platform:
 
 Try deploying nginx:
 
-```yaml title="tenants/dev/simple-yaml/nginx.yaml"
+```yaml title="nginx/dev.yaml"
 image: nginx:alpine
 port: 80
 ```

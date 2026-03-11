@@ -24,25 +24,22 @@ Place your YAML files in the `BasePlate-Dev` repository following this structure
 
 ```
 BasePlate-Dev/
-└── tenants/
-    ├── dev/
-    │   └── simple-yaml/
-    │       ├── echo.yaml
-    │       └── welcome.yaml
-    ├── staging/
-    │   └── simple-yaml/
-    │       └── todo-api.yaml
-    └── preprod/
-        └── simple-yaml/
-            └── hello-world.yaml
+├── echo/           # service_name = folder
+│   ├── dev.yaml    # namespace = filename
+│   └── prod.yaml
+├── api/
+│   ├── dev.yaml
+│   └── stage.yaml
+└── welcome/
+    └── dev.yaml
 ```
 
-The **folder name** determines the Kubernetes namespace. The **file name** determines the service name.
+The **folder name** determines the service name. The **filename** (without `.yaml`) determines the Kubernetes namespace.
 
 | Path | Namespace | Service Name | URL |
 |------|-----------|-------------|-----|
-| `tenants/dev/simple-yaml/echo.yaml` | `dev` | `echo` | `echo-dev.easysolution.work` |
-| `tenants/staging/simple-yaml/todo-api.yaml` | `staging` | `todo-api` | `todo-api-staging.easysolution.work` |
+| `echo/dev.yaml` | `dev` | `echo` | `echo-dev.easysolution.work` |
+| `api/stage.yaml` | `stage` | `api` | `api-stage.easysolution.work` |
 
 ## What Can You Deploy?
 

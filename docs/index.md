@@ -116,7 +116,7 @@ flowchart TB
 
 === "Container Image"
 
-    ```yaml title="tenants/dev/simple-yaml/echo.yaml"
+    ```yaml title="echo/dev.yaml"
     image: ealen/echo-server:0.9.2
     ```
 
@@ -124,7 +124,7 @@ flowchart TB
 
 === "Git Repository"
 
-    ```yaml title="tenants/dev/simple-yaml/welcome.yaml"
+    ```yaml title="welcome/dev.yaml"
     repo: https://github.com/docker/welcome-to-docker
     ```
 

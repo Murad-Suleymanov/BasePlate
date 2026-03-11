@@ -6,7 +6,7 @@ The simplest way to use Easy-Deploy — point to an existing container image and
 
 Create a YAML file in the `BasePlate-Dev` repository:
 
-```yaml title="tenants/dev/simple-yaml/echo.yaml"
+```yaml title="echo/dev.yaml"
 image: ealen/echo-server:0.9.2
 ```
 

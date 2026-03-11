@@ -110,12 +110,12 @@ You can use both strategies simultaneously:
 - **Production**: Tag-based (explicit control)
 - **Development**: Webhook-based (automatic on push)
 
-```yaml title="tenants/prod/simple-yaml/api.yaml"
+```yaml title="api/prod.yaml"
 repo: https://github.com/your-org/api
 tag: v3.0.0  # Only changes on explicit release
 ```
 
-```yaml title="tenants/dev/simple-yaml/api.yaml"
+```yaml title="api/dev.yaml"
 repo: https://github.com/your-org/api
 # No tag = always builds latest + rebuilds on webhook
 ```

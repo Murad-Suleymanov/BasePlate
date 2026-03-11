@@ -174,7 +174,7 @@ kubectl -n argocd patch application <name> --type merge -p '{"operation":{"initi
 kubectl -n argocd get applicationset easy-deploy-birservices -o yaml | grep -A5 status
 
 # Verify file path matches the pattern
-# Must be: tenants/*/simple-yaml/*.yaml
+# Must be: service_name/namespace_name.yaml (e.g. api/prod.yaml)
 ```
 
 ---

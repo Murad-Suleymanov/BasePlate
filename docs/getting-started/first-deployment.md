@@ -9,7 +9,7 @@ This guide walks you through deploying an application by building it from a Git 
 
 ## Deploy Docker's Welcome App
 
-**1.** Create a file at `tenants/dev/simple-yaml/welcome.yaml` in BasePlate-Dev:
+**1.** Create a file at `welcome/dev.yaml` in BasePlate-Dev:
 
 ```yaml
 repo: https://github.com/docker/welcome-to-docker
@@ -20,7 +20,7 @@ That's it. One line.
 **2.** Commit and push:
 
 ```bash
-git add tenants/dev/simple-yaml/welcome.yaml
+git add welcome/dev.yaml
 git commit -m "deploy welcome app from git"
 git push
 ```
@@ -73,7 +73,7 @@ The operator:
 
 By default, Kaniko uses the repository's default branch. To build a specific branch or tag:
 
-```yaml title="tenants/staging/simple-yaml/myapp.yaml"
+```yaml title="myapp/stage.yaml"
 repo: https://github.com/your-org/your-app
 tag: v2.0.0
 ```
@@ -82,7 +82,7 @@ tag: v2.0.0
 
 If the Dockerfile is not at the repository root:
 
-```yaml title="tenants/dev/simple-yaml/api.yaml"
+```yaml title="api/dev.yaml"
 repo: https://github.com/your-org/monorepo
 dockerfile: services/api/Dockerfile
 ```

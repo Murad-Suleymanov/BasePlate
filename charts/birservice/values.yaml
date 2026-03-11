@@ -13,5 +13,5 @@ hostname: ""
 # Expose: true = HTTPRoute + DNS (default). false = internal only.
 expose: true
 
-# Metrics: false/omit = no ServiceMonitor. true = /metrics. Or { enabled: true, path: /actuator/prometheus }
-metrics: false
+# Metrics: default true - hər komponent metrik yığır. false = söndür. Or { enabled: true, path: /actuator/prometheus }
+metrics: true

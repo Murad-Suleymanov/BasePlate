@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
@@ -74,12 +75,23 @@ func generate(args []string) {
 		os.Exit(1)
 	}
 
+	// Derive name/namespace from path (service_name/namespace_name.yaml) if not in YAML
+	dir, file := filepath.Dir(inPath), filepath.Base(inPath)
+	namespaceFromFile := strings.TrimSuffix(file, filepath.Ext(file))
 	if s.Name == "" {
-		fmt.Fprintln(os.Stderr, "simple yaml: name is required")
-		os.Exit(2)
+		// Path like "api/prod.yaml" -> name=api (from dir), or just "prod.yaml" -> name=prod
+		if dir != "." && dir != string(filepath.Separator) {
+			s.Name = filepath.Base(dir)
+		} else {
+			s.Name = namespaceFromFile
+		}
 	}
 	if s.Namespace == "" {
-		s.Namespace = "default"
+		if dir != "." && dir != string(filepath.Separator) {
+			s.Namespace = namespaceFromFile
+		} else {
+			s.Namespace = "default"
+		}
 	}
 
 	var replicas *int32

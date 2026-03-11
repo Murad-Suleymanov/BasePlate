@@ -497,12 +497,13 @@ func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deplo
 }
 
 func (r *BirServiceReconciler) metricsEnabled(bs *deployv1alpha1.BirService) (bool, string) {
-	if bs.Spec.Metrics == nil || !bs.Spec.Metrics.Enabled {
+	// Default true - metrik yığışdırma aktiv olur, explicit false ilə söndürülə bilər
+	if bs.Spec.Metrics != nil && !bs.Spec.Metrics.Enabled {
 		return false, ""
 	}
-	path := bs.Spec.Metrics.Path
-	if path == "" {
-		path = "/metrics"
+	path := "/metrics"
+	if bs.Spec.Metrics != nil && bs.Spec.Metrics.Path != "" {
+		path = bs.Spec.Metrics.Path
 	}
 	return true, path
 }

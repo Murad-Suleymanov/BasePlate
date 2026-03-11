@@ -4,7 +4,7 @@ Easy-Deploy can build container images directly from Git repositories using Kani
 
 ## Basic Git Deployment
 
-```yaml title="tenants/dev/simple-yaml/welcome.yaml"
+```yaml title="welcome/dev.yaml"
 repo: https://github.com/docker/welcome-to-docker
 ```
 
