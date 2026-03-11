@@ -29,4 +29,18 @@ spec:
 {{- if .Values.hostname }}
   hostname: {{ .Values.hostname | quote }}
 {{- end }}
+{{- if ne (default true .Values.expose) true }}
+  expose: false
+{{- end }}
+{{- if .Values.metrics }}
+{{- if eq (kindOf .Values.metrics) "map" }}
+  metrics:
+    enabled: {{ default true .Values.metrics.enabled }}
+    path: {{ default "/metrics" .Values.metrics.path | quote }}
+{{- else if .Values.metrics }}
+  metrics:
+    enabled: true
+    path: "/metrics"
+{{- end }}
+{{- end }}
 

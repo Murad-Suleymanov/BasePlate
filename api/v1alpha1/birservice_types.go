@@ -32,6 +32,23 @@ type BirServiceSpec struct {
 	// Hostname is the public DNS name for external access.
 	// If empty, auto-generated as <name>-<namespace>.<baseDomain>.
 	Hostname string `json:"hostname,omitempty"`
+
+	// Expose controls external access via HTTPRoute and DNS. Default true.
+	// If false, service is internal-only (ClusterIP).
+	Expose *bool `json:"expose,omitempty"`
+
+	// Metrics configures Prometheus ServiceMonitor for custom app metrics.
+	// Omit or false: no ServiceMonitor. true: enabled with path /metrics.
+	// Object form: { enabled: true, path: /actuator/prometheus }
+	Metrics *MetricsSpec `json:"metrics,omitempty"`
+}
+
+// MetricsSpec configures Prometheus scraping for custom application metrics.
+type MetricsSpec struct {
+	// Enabled turns on ServiceMonitor creation. Default path /metrics.
+	Enabled bool `json:"enabled"`
+	// Path is the metrics HTTP path (default /metrics).
+	Path string `json:"path,omitempty"`
 }
 
 // BirServiceStatus defines the observed state of BirService

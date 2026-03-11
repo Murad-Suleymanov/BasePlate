@@ -9,3 +9,9 @@ port: 0
 containerPort: 0
 replicas: 1
 hostname: ""
+
+# Expose: true = HTTPRoute + DNS (default). false = internal only.
+expose: true
+
+# Metrics: false/omit = no ServiceMonitor. true = /metrics. Or { enabled: true, path: /actuator/prometheus }
+metrics: false

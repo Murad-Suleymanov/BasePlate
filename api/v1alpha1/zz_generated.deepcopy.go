@@ -23,6 +23,29 @@ func (in *BirServiceSpec) DeepCopyInto(out *BirServiceSpec) {
 		*out = new(int32)
 		**out = **in
 	}
+	if in.Expose != nil {
+		in, out := &in.Expose, &out.Expose
+		*out = new(bool)
+		**out = **in
+	}
+	if in.Metrics != nil {
+		in, out := &in.Metrics, &out.Metrics
+		*out = new(MetricsSpec)
+		**out = **in
+	}
+}
+
+func (in *MetricsSpec) DeepCopyInto(out *MetricsSpec) {
+	*out = *in
+}
+
+func (in *MetricsSpec) DeepCopy() *MetricsSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(MetricsSpec)
+	in.DeepCopyInto(out)
+	return out
 }
 
 func (in *BirServiceSpec) DeepCopy() *BirServiceSpec {

@@ -73,6 +73,17 @@ spec:
                   maximum: 65535
                 hostname:
                   type: string
+                expose:
+                  type: boolean
+                  description: If false, no HTTPRoute/DNS (internal only). Default true.
+                metrics:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                    path:
+                      type: string
+                      description: Metrics HTTP path, default /metrics
             status:
               type: object
               properties:

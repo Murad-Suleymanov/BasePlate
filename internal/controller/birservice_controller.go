@@ -154,6 +154,10 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
+	if err := r.reconcileServiceMonitor(ctx, bs, svcName, port); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	var dep appsv1.Deployment
 	if err := r.Get(ctx, depKey, &dep); err != nil {
 		return ctrl.Result{}, err
@@ -400,6 +404,12 @@ var httpRouteGVK = schema.GroupVersionKind{
 	Kind:    "HTTPRoute",
 }
 
+var serviceMonitorGVK = schema.GroupVersionKind{
+	Group:   "monitoring.coreos.com",
+	Version: "v1",
+	Kind:    "ServiceMonitor",
+}
+
 const (
 	gatewayName      = "main-gateway"
 	gatewayNamespace = "nginx-gateway"
@@ -415,11 +425,18 @@ func (r *BirServiceReconciler) resolveHostname(bs *deployv1alpha1.BirService) st
 	return ""
 }
 
+func exposeOrDefault(bs *deployv1alpha1.BirService) bool {
+	if bs.Spec.Expose == nil {
+		return true
+	}
+	return *bs.Spec.Expose
+}
+
 func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deployv1alpha1.BirService, svcName string, svcPort int32) error {
 	routeName := fmt.Sprintf("%s-route", bs.Name)
 	hostname := r.resolveHostname(bs)
 
-	if hostname == "" {
+	if !exposeOrDefault(bs) || hostname == "" {
 		existing := &unstructured.Unstructured{}
 		existing.SetGroupVersionKind(httpRouteGVK)
 		err := r.Get(ctx, types.NamespacedName{Name: routeName, Namespace: bs.Namespace}, existing)
@@ -474,6 +491,62 @@ func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deplo
 			}
 
 			return ctrl.SetControllerReference(bs, route, r.Scheme)
+		})
+		return err
+	})
+}
+
+func (r *BirServiceReconciler) metricsEnabled(bs *deployv1alpha1.BirService) (bool, string) {
+	if bs.Spec.Metrics == nil || !bs.Spec.Metrics.Enabled {
+		return false, ""
+	}
+	path := bs.Spec.Metrics.Path
+	if path == "" {
+		path = "/metrics"
+	}
+	return true, path
+}
+
+func (r *BirServiceReconciler) reconcileServiceMonitor(ctx context.Context, bs *deployv1alpha1.BirService, svcName string, port int32) error {
+	monitorName := fmt.Sprintf("%s-monitor", bs.Name)
+	enabled, path := r.metricsEnabled(bs)
+
+	if !enabled {
+		existing := &unstructured.Unstructured{}
+		existing.SetGroupVersionKind(serviceMonitorGVK)
+		err := r.Get(ctx, types.NamespacedName{Name: monitorName, Namespace: bs.Namespace}, existing)
+		if err == nil {
+			return r.Delete(ctx, existing)
+		}
+		return client.IgnoreNotFound(err)
+	}
+
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		sm := &unstructured.Unstructured{}
+		sm.SetGroupVersionKind(serviceMonitorGVK)
+		sm.SetName(monitorName)
+		sm.SetNamespace(bs.Namespace)
+
+		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, sm, func() error {
+			sm.Object["spec"] = map[string]interface{}{
+				"selector": map[string]interface{}{
+					"matchLabels": map[string]interface{}{
+						"app.kubernetes.io/name": bs.Name,
+					},
+				},
+				"endpoints": []interface{}{
+					map[string]interface{}{
+						"port":     "http",
+						"path":     path,
+						"interval": "30s",
+					},
+				},
+			}
+			sm.SetLabels(mergeStringMap(sm.GetLabels(), map[string]string{
+				"app.kubernetes.io/name":       bs.Name,
+				"app.kubernetes.io/managed-by": "easy-deploy-operator",
+			}))
+			return ctrl.SetControllerReference(bs, sm, r.Scheme)
 		})
 		return err
 	})
