@@ -9,6 +9,9 @@ import (
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -105,9 +108,80 @@ func normalizeGitURL(u string) string {
 	return strings.ToLower(u)
 }
 
-func StartServer(ctx context.Context, addr string, handler *GitHubHandler) error {
+type BuildCompleteHandler struct {
+	Client client.Client
+}
+
+const inClusterRegistry = "registry.registry.svc.cluster.local:5000"
+
+type buildCompletePayload struct {
+	Service   string `json:"service"`
+	Namespace string `json:"namespace"`
+	Tag       string `json:"tag"`
+}
+
+func (h *BuildCompleteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	l := log.FromContext(ctx).WithName("build-complete")
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 4096))
+	if err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	var payload buildCompletePayload
+	if err := json.Unmarshal(body, &payload); err != nil || payload.Service == "" || payload.Namespace == "" {
+		http.Error(w, "invalid JSON: need {service, namespace}", http.StatusBadRequest)
+		return
+	}
+	if payload.Tag == "" {
+		payload.Tag = "latest"
+	}
+
+	depName := payload.Service + "-deploy"
+	image := inClusterRegistry + "/" + payload.Service + ":" + payload.Tag
+	l.Info("build complete, deploying", "deployment", depName, "namespace", payload.Namespace, "image", image)
+
+	// Patch deployment with new image (tag-based, rollback üçün)
+	jsonPatch := []byte(`[{"op":"replace","path":"/spec/template/spec/containers/0/image","value":"` + image + `"}]`)
+	dep := &appsv1.Deployment{}
+	dep.Name = depName
+	dep.Namespace = payload.Namespace
+	err = h.Client.Patch(ctx, dep, client.RawPatch(types.JSONPatchType, jsonPatch))
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			http.Error(w, "deployment not found", http.StatusNotFound)
+			return
+		}
+		l.Error(err, "failed to patch deployment", "deployment", depName)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// BirService status yenilə - controller status.BuildTag istifadə edəcək
+	bs := &deployv1alpha1.BirService{}
+	if err := h.Client.Get(ctx, types.NamespacedName{Name: payload.Service, Namespace: payload.Namespace}, bs); err == nil {
+		bs.Status.BuildTag = payload.Tag
+		bs.Status.BuildStatus = "Succeeded"
+		bs.Status.BuildImage = image
+		_ = h.Client.Status().Update(ctx, bs)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"ok":true,"deployment":"%s","tag":"%s"}`+"\n", depName, payload.Tag)
+}
+
+func StartServer(ctx context.Context, addr string, handler *GitHubHandler, buildComplete *BuildCompleteHandler) error {
 	mux := http.NewServeMux()
 	mux.Handle("/webhook/github", handler)
+	mux.Handle("/webhook/build-complete", buildComplete)
 	mux.HandleFunc("/webhook/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

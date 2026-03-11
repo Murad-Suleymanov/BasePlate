@@ -13,9 +13,19 @@ type BirServiceSpec struct {
 	// Git URL (https://github.com/user/app) containing a Dockerfile to build.
 	Repo string `json:"repo,omitempty"`
 
+	// InjectPipeline, when true, instructs the platform to add a GitHub Actions
+	// workflow to the repository (when repo is a GitHub URL). Requires
+	// GITHUB_TOKEN with repo write access. Pipeline builds and pushes to the
+	// platform registry on every push.
+	InjectPipeline *bool `json:"injectPipeline,omitempty"`
+
 	// Tag is an image tag or git ref (branch/tag/commit). Defaults to "latest" for
 	// image repos and "main" for git repos.
 	Tag string `json:"tag,omitempty"`
+
+	// ImageTag overrides the deployed image tag (e.g. abc1234). For rollback: set to a previous SHA.
+	// When empty, uses status.buildTag from the last pipeline build.
+	ImageTag string `json:"imageTag,omitempty"`
 
 	// Dockerfile path relative to repo root (default: "Dockerfile"). Only used for git repos.
 	Dockerfile string `json:"dockerfile,omitempty"`

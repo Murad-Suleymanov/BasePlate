@@ -81,7 +81,8 @@ func main() {
 
 	go func() {
 		wh := &webhook.GitHubHandler{Client: mgr.GetClient()}
-		if err := webhook.StartServer(context.WithValue(ctx, struct{}{}, nil), webhookAddr, wh); err != nil {
+		bc := &webhook.BuildCompleteHandler{Client: mgr.GetClient()}
+		if err := webhook.StartServer(context.WithValue(ctx, struct{}{}, nil), webhookAddr, wh, bc); err != nil {
 			ctrl.Log.Error(err, "webhook server failed")
 		}
 	}()

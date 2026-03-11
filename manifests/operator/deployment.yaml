@@ -28,6 +28,14 @@ spec:
               value: "easysolution.work"
             - name: TARGET_IP
               value: "116.203.203.121"
+            - name: REGISTRY_URL
+              value: "registry.easysolution.work"
+          envFrom:
+            # GITHUB_TOKEN, REGISTRY_USERNAME, REGISTRY_PASSWORD
+            # GITHUB_TOKEN patch: kubectl patch secret github-pipeline-secret -n easy-deploy-system -p '{"stringData":{"GITHUB_TOKEN":"ghp_xxx"}}'
+            - secretRef:
+                name: github-pipeline-secret
+                optional: true
           ports:
             - name: metrics
               containerPort: 8080

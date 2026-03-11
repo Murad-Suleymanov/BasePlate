@@ -4,6 +4,8 @@ go 1.16
 
 require (
 	github.com/go-logr/logr v0.4.0 // indirect
+	github.com/google/go-cmp v0.6.0 // indirect
+	github.com/jefflinse/githubsecret v1.0.2
 	k8s.io/api v0.20.15
 	k8s.io/apimachinery v0.20.15
 	k8s.io/client-go v0.20.15

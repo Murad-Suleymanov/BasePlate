@@ -4,6 +4,7 @@ image: ""
 repo: ""
 tag: ""
 dockerfile: ""
+# imageTag: "abc1234"  # rollback üçün — əvvəlki SHA
 
 port: 0
 containerPort: 0

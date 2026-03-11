@@ -55,8 +55,14 @@ spec:
                   type: string
                 tag:
                   type: string
+                imageTag:
+                  type: string
+                  description: Rollback üçün əvvəlki SHA (məs. abc1234)
                 dockerfile:
                   type: string
+                injectPipeline:
+                  type: boolean
+                  description: When true, adds GitHub Actions build workflow to the repo. Requires GITHUB_TOKEN.
                 replicas:
                   type: integer
                   format: int32

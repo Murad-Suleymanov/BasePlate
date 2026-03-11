@@ -4,6 +4,11 @@ kind: Kustomization
 resources:
   - crd/birservice_crd.yaml
   - operator/namespace.yaml
+  # github-pipeline-secret: admin tərəfdən yaradılmalıdır (token güvənlidir)
+  # kubectl create secret generic github-pipeline-secret -n easy-deploy-system \
+  #   --from-literal=GITHUB_TOKEN=<token> \
+  #   --from-literal=REGISTRY_USERNAME=admin \
+  #   --from-literal=REGISTRY_PASSWORD=EasyDeploy2026
   - operator/serviceaccount.yaml
   - operator/clusterrole.yaml
   - operator/clusterrolebinding.yaml

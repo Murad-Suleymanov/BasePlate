@@ -16,6 +16,9 @@ spec:
 {{- if .Values.tag }}
   tag: {{ .Values.tag | quote }}
 {{- end }}
+{{- if .Values.imageTag }}
+  imageTag: {{ .Values.imageTag | quote }}
+{{- end }}
 {{- if .Values.dockerfile }}
   dockerfile: {{ .Values.dockerfile | quote }}
 {{- end }}

@@ -33,6 +33,11 @@ func (in *BirServiceSpec) DeepCopyInto(out *BirServiceSpec) {
 		*out = new(MetricsSpec)
 		**out = **in
 	}
+	if in.InjectPipeline != nil {
+		in, out := &in.InjectPipeline, &out.InjectPipeline
+		*out = new(bool)
+		**out = **in
+	}
 }
 
 func (in *MetricsSpec) DeepCopyInto(out *MetricsSpec) {

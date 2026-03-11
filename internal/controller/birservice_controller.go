@@ -25,16 +25,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	deployv1alpha1 "easy-deploy/api/v1alpha1"
+	"easy-deploy/internal/injector"
 	"easy-deploy/internal/registry"
+	"os"
 )
 
 const (
-	registryURL    = "registry.registry.svc.cluster.local:5000"
-	kanikoImage    = "gcr.io/kaniko-project/executor:latest"
-	labelBuildTag  = "deploy.easydeploy.io/build-tag"
-	labelPurpose   = "deploy.easydeploy.io/purpose"
-	annotRebuild   = "deploy.easydeploy.io/rebuild"
-	requeueBuild   = 10 * time.Second
+	registryURL       = "registry.registry.svc.cluster.local:5000"
+	kanikoImage       = "gcr.io/kaniko-project/executor:latest"
+	labelBuildTag     = "deploy.easydeploy.io/build-tag"
+	labelPurpose      = "deploy.easydeploy.io/purpose"
+	annotRebuild      = "deploy.easydeploy.io/rebuild"
+	annotPipelineInj  = "deploy.easydeploy.io/pipeline-injected"
+	requeueBuild      = 10 * time.Second
 )
 
 type BirServiceReconciler struct {
@@ -108,8 +111,9 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 			dep.Spec.Template.ObjectMeta.Labels = labels
 			dep.Spec.Template.Spec.Containers = []corev1.Container{
 				{
-					Name:  "app",
-					Image: image,
+					Name:            "app",
+					Image:           image,
+					ImagePullPolicy: corev1.PullAlways, // rollout restart-da yeni image çəkilir (:latest və ya :sha)
 					Ports: []corev1.ContainerPort{
 						{ContainerPort: containerPort},
 					},
@@ -182,20 +186,62 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 // reconcileBuild handles Git-based repos: creates a Kaniko build Job, waits for
 // completion, then deploys the built image from the local registry.
 // It detects tag changes and rebuild annotations to trigger new builds.
+// When injectPipeline is true, ensures GitHub Actions workflow exists in the repo.
 func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Request, bs *deployv1alpha1.BirService) (ctrl.Result, error) {
 	l := log.FromContext(ctx)
+
+	// Always inject pipeline for GitHub repos — workflow builds & pushes to registry, then notifies deploy
+	if owner, repo, ok := injector.ParseGitHubRepo(bs.Spec.Repo); ok {
+		if bs.Annotations == nil || bs.Annotations[annotPipelineInj] == "" {
+			token := os.Getenv("GITHUB_TOKEN")
+			regURL := os.Getenv("REGISTRY_URL")
+			if regURL == "" {
+				regURL = "registry.easysolution.work"
+			}
+			webhookURL := os.Getenv("WEBHOOK_URL")
+			if webhookURL == "" {
+				webhookURL = "https://webhook.easysolution.work"
+			}
+			regUser := os.Getenv("REGISTRY_USERNAME")
+			regPass := os.Getenv("REGISTRY_PASSWORD")
+			if err := injector.EnsureWorkflow(token, owner, repo, regURL, bs.Name, webhookURL, bs.Name, bs.Namespace); err != nil {
+				l.Error(err, "pipeline injection failed", "repo", bs.Spec.Repo)
+			} else if err := injector.EnsureRepoSecrets(token, owner, repo, regUser, regPass); err != nil {
+				l.Error(err, "repo secrets failed", "repo", bs.Spec.Repo)
+			} else {
+				l.Info("pipeline injected", "repo", bs.Spec.Repo)
+				if bs.Annotations == nil {
+					bs.Annotations = make(map[string]string)
+				}
+				bs.Annotations[annotPipelineInj] = "true"
+				_ = r.Update(ctx, bs)
+			}
+		}
+	}
 
 	tag := bs.Spec.Tag
 	imageTag := tag
 	if imageTag == "" {
 		imageTag = "latest"
 	}
+	// Pipeline mode: spec.imageTag (rollback) > status.BuildTag > latest
+	if bs.Spec.ImageTag != "" {
+		imageTag = bs.Spec.ImageTag
+	} else if bs.Status.BuildStatus == "Succeeded" && bs.Status.BuildTag != "" {
+		imageTag = bs.Status.BuildTag
+	}
 	buildImage := fmt.Sprintf("%s/%s:%s", registryURL, bs.Name, imageTag)
+
+	// After first successful build, use image from registry (pipeline builds on push, notifies via webhook)
+	if bs.Status.BuildStatus == "Succeeded" {
+		l.Info("using image from registry", "image", buildImage, "tag", imageTag)
+		return r.reconcileDeployment(ctx, req, bs, buildImage)
+	}
 
 	needsRebuild := r.needsRebuild(bs, imageTag)
 
 	if needsRebuild {
-		l.Info("rebuild triggered, cleaning old build jobs", "tag", imageTag)
+		l.Info("first build, creating Kaniko job", "tag", imageTag)
 		if err := r.deleteOldBuildJobs(ctx, bs); err != nil {
 			return ctrl.Result{}, err
 		}
