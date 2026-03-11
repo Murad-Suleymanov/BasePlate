@@ -29,9 +29,12 @@ kubectl -n argocd get secret argocd-initial-admin-secret \
 
 ## Step 2: Install Prerequisite CRDs
 
-Easy-Deploy depends on Gateway API and Prometheus Operator CRDs:
+Clone the infrastructure repository and install CRDs:
 
 ```bash
+git clone https://github.com/Murad-Suleymanov/BasePlate-Infra.git
+cd BasePlate-Infra
+
 # Local-path StorageClass (for Prometheus persistent storage)
 kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.30/deploy/local-path-storage.yaml
 
@@ -68,25 +71,19 @@ kubectl create secret generic cloudflare-api-token \
 
 ## Step 4: Deploy the Platform
 
-Clone the repository and apply all ArgoCD applications:
+From the `BasePlate-Infra` repo (cloned in Step 2), apply all ArgoCD applications:
 
 ```bash
-git clone https://github.com/Murad-Suleymanov/BasePlate.git
-cd BasePlate
-
-kubectl apply -n argocd -f argocd/application-platform.yaml
-kubectl apply -n argocd -f argocd/applicationset-birservices.yaml
-kubectl apply -n argocd -f argocd/application-gateway.yaml
-kubectl apply -n argocd -f argocd/application-cert-manager.yaml
-kubectl apply -n argocd -f argocd/application-monitoring.yaml
-kubectl apply -n argocd -f argocd/application-external-dns.yaml
+cd BasePlate-Infra
+kubectl apply -n argocd -f argocd/
 ```
 
 This deploys all platform components:
 
 | Application | What It Deploys |
 |------------|----------------|
-| `application-platform.yaml` | CRD, Operator, Local Registry, Gateway config |
+| `application-platform.yaml` | CRD + Operator (from BasePlate repo) |
+| `application-infra.yaml` | Gateway, Registry, Webhook manifests (from BasePlate-Infra) |
 | `applicationset-birservices.yaml` | Auto-discovers developer YAMLs in BasePlate-Dev |
 | `application-gateway.yaml` | NGINX Gateway Fabric |
 | `application-cert-manager.yaml` | cert-manager for TLS certificates |

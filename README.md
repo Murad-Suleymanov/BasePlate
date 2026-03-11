@@ -111,6 +111,14 @@ hostname: ""                 # Custom hostname (default: <name>-<namespace>.easy
 
 ## Repository structure
 
+The platform spans three Git repositories:
+
+| Repo | Purpose |
+|------|---------|
+| **[BasePlate](https://github.com/Murad-Suleymanov/BasePlate)** (this) | Go operator, CRD, Helm chart, operator manifests |
+| **[BasePlate-Infra](https://github.com/Murad-Suleymanov/BasePlate-Infra)** | ArgoCD apps, gateway/registry/webhook manifests, install scripts |
+| **[BasePlate-Dev](https://github.com/Murad-Suleymanov/BasePlate-Dev)** | Developer YAML files (`tenants/*/simple-yaml/*.yaml`) |
+
 ```
 BasePlate/                              # Platform repo (this repo)
 ├── api/v1alpha1/                       # BirService CRD Go types
@@ -133,25 +141,34 @@ BasePlate/                              # Platform repo (this repo)
 │   └── templates/birservice.yaml
 ├── config/crd/                         # CRD source of truth
 │   └── birservice_crd.yaml
-├── manifests/                          # Platform manifests (synced by ArgoCD)
+├── manifests/                          # Operator manifests (synced by ArgoCD)
 │   ├── crd/birservice_crd.yaml         #   BirService CRD
-│   ├── operator/                       #   Operator Deployment, RBAC, Webhook
-│   ├── gateway/                        #   NGINX Gateway, TLS, ClusterIssuers
-│   └── registry/                       #   Local container registry
-├── argocd/                             # ArgoCD Application definitions
-│   ├── application-platform.yaml       #   Platform manifests
-│   ├── applicationset-birservices.yaml #   Auto-discover developer YAMLs
-│   ├── application-gateway.yaml        #   NGINX Gateway Fabric
-│   ├── application-cert-manager.yaml   #   cert-manager
-│   ├── application-monitoring.yaml     #   Prometheus + Grafana
-│   └── application-external-dns.yaml   #   ExternalDNS (Cloudflare)
+│   ├── operator/                       #   Operator Deployment, RBAC
+│   └── kustomization.yaml
 ├── Dockerfile                          # Multi-stage: Go builder → distroless
 ├── .github/workflows/
 │   └── operator-image.yml              # CI: build + push operator image to GHCR
-├── go.mod / go.sum                     # Go dependencies
-└── install-*.sh                        # CRD installation scripts
+└── go.mod / go.sum                     # Go dependencies
 
-BasePlate-Dev/                          # Developer catalog repo (separate repo)
+BasePlate-Infra/                        # Infrastructure repo
+├── argocd/                             # ArgoCD Application definitions
+│   ├── application-platform.yaml       #   CRD + Operator (→ BasePlate)
+│   ├── application-infra.yaml          #   Gateway, Registry, Webhook (→ this repo)
+│   ├── applicationset-birservices.yaml #   Auto-discover developer YAMLs
+│   ├── application-gateway.yaml        #   NGINX Gateway Fabric (Helm)
+│   ├── application-cert-manager.yaml   #   cert-manager (Helm)
+│   ├── application-monitoring.yaml     #   Prometheus + Grafana (Helm)
+│   └── application-external-dns.yaml   #   ExternalDNS (Helm)
+├── manifests/                          # Infra manifests (synced by ArgoCD)
+│   ├── gateway/                        #   NGINX Gateway, TLS, ClusterIssuers
+│   ├── registry/                       #   Local container registry
+│   ├── operator/                       #   Webhook Service + HTTPRoute
+│   └── kustomization.yaml
+├── install-gateway-api-crds.sh         # One-time: install Gateway API CRDs
+├── install-kube-prometheus-crds.sh     # One-time: install Prometheus CRDs
+└── verify-kube-prometheus-stack.sh     # Verify monitoring stack health
+
+BasePlate-Dev/                          # Developer catalog repo
 └── tenants/
     ├── dev/simple-yaml/
     │   ├── echo.yaml                   # image: ealen/echo-server:0.9.2
@@ -240,6 +257,9 @@ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.pas
 ### Step 2: Install prerequisite CRDs
 
 ```bash
+git clone https://github.com/Murad-Suleymanov/BasePlate-Infra.git
+cd BasePlate-Infra
+
 # local-path StorageClass (for Prometheus persistent storage)
 kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.30/deploy/local-path-storage.yaml
 
@@ -267,15 +287,8 @@ kubectl create secret generic cloudflare-api-token \
 ### Step 4: Deploy platform
 
 ```bash
-git clone https://github.com/Murad-Suleymanov/BasePlate.git
-cd BasePlate
-
-kubectl apply -n argocd -f argocd/application-platform.yaml
-kubectl apply -n argocd -f argocd/applicationset-birservices.yaml
-kubectl apply -n argocd -f argocd/application-gateway.yaml
-kubectl apply -n argocd -f argocd/application-cert-manager.yaml
-kubectl apply -n argocd -f argocd/application-monitoring.yaml
-kubectl apply -n argocd -f argocd/application-external-dns.yaml
+# From the BasePlate-Infra repo:
+kubectl apply -n argocd -f argocd/
 ```
 
 ### Step 5: Configure worker node

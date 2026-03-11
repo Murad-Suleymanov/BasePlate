@@ -1,0 +1,5 @@
+﻿refactor: move infra manifests and ArgoCD apps to BasePlate-Infra
+
+Split the monorepo into platform (BasePlate) and infrastructure (BasePlate-Infra).
+Moved to BasePlate-Infra: ArgoCD applications, gateway/registry/webhook manifests,
+install scripts. Updated README, docs, and kustomization.yaml references.

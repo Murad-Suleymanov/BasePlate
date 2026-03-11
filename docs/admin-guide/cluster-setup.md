@@ -34,7 +34,12 @@ kubectl -n argocd get secret argocd-initial-admin-secret \
 
 ## Step 2: Install CRDs
 
-The platform depends on Gateway API and Prometheus Operator CRDs:
+Clone the infrastructure repository and install CRDs:
+
+```bash
+git clone https://github.com/Murad-Suleymanov/BasePlate-Infra.git
+cd BasePlate-Infra
+```
 
 === "Gateway API"
 
@@ -86,29 +91,19 @@ kubectl create secret generic cloudflare-api-token \
 
 ## Step 4: Deploy Platform Components
 
-Clone the repository and apply all ArgoCD applications:
+From the `BasePlate-Infra` repo (cloned in Step 2), apply all ArgoCD applications:
 
 ```bash
-git clone https://github.com/Murad-Suleymanov/BasePlate.git
-cd BasePlate
-```
-
-Apply each application:
-
-```bash
-kubectl apply -n argocd -f argocd/application-platform.yaml
-kubectl apply -n argocd -f argocd/applicationset-birservices.yaml
-kubectl apply -n argocd -f argocd/application-gateway.yaml
-kubectl apply -n argocd -f argocd/application-cert-manager.yaml
-kubectl apply -n argocd -f argocd/application-monitoring.yaml
-kubectl apply -n argocd -f argocd/application-external-dns.yaml
+cd BasePlate-Infra
+kubectl apply -n argocd -f argocd/
 ```
 
 ### What Each Application Deploys
 
 | Application | Namespace | Components |
 |------------|-----------|------------|
-| `application-platform` | Various | BirService CRD, operator, registry, gateway config |
+| `application-platform` | `easy-deploy-system` | BirService CRD + Operator (from BasePlate repo) |
+| `application-infra` | Various | Gateway, Registry, Webhook (from BasePlate-Infra repo) |
 | `applicationset-birservices` | Per-tenant | Auto-discovers developer YAMLs |
 | `application-gateway` | `nginx-gateway` | NGINX Gateway Fabric |
 | `application-cert-manager` | `cert-manager` | cert-manager controller + webhooks |
@@ -165,7 +160,7 @@ kubectl -n cert-manager logs deployment/cert-manager --tail=30
 
 The platform is managed by ArgoCD. To update:
 
-1. Push changes to the `BasePlate` repository
+1. Push changes to `BasePlate` (operator/CRD) or `BasePlate-Infra` (infra manifests/ArgoCD apps)
 2. ArgoCD detects the changes and syncs automatically
 
 For the operator image:
