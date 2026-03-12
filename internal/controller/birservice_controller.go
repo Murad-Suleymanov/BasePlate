@@ -280,7 +280,6 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 			"--destination=" + buildImage,
 			"--insecure",
 			"--cache=false",
-			"--docker-config=/kaniko/.docker/.dockerconfigjson",
 		}
 
 		job = batchv1.Job{
@@ -319,6 +318,9 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 								VolumeSource: corev1.VolumeSource{
 									Secret: &corev1.SecretVolumeSource{
 										SecretName: registryPushSecretName,
+										Items: []corev1.KeyToPath{
+											{Key: corev1.DockerConfigJsonKey, Path: "config.json"},
+										},
 									},
 								},
 							},
