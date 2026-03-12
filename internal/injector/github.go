@@ -198,6 +198,9 @@ jobs:
         run: |
           echo "short_sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Login to Easy Deploy Registry
         uses: docker/login-action@v3
         with:
