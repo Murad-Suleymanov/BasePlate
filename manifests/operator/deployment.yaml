@@ -31,8 +31,7 @@ spec:
             - name: REGISTRY_URL
               value: "registry.easysolution.work"
           envFrom:
-            # GITHUB_TOKEN, REGISTRY_USERNAME, REGISTRY_PASSWORD
-            # GITHUB_TOKEN patch: kubectl patch secret github-pipeline-secret -n easy-deploy-system -p '{"stringData":{"GITHUB_TOKEN":"ghp_xxx"}}'
+            # github-pipeline-secret: GITHUB_TOKEN, REGISTRY_USERNAME, REGISTRY_PASSWORD (one-time)
             - secretRef:
                 name: github-pipeline-secret
                 optional: true

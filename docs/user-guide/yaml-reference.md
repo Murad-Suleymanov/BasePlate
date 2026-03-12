@@ -125,14 +125,7 @@ If omitted, Kaniko uses the repository's default branch.
 
 ### `injectPipeline`
 
-When `true` and `repo` is a GitHub URL, the platform adds a GitHub Actions workflow to the repository. The workflow builds and pushes the image to the platform registry on every push to `main` or `master`. Platform admins must create a secret:
-
-```bash
-kubectl create secret generic github-pipeline-secret -n easy-deploy-system \
-  --from-literal=GITHUB_TOKEN=<your-github-token>
-```
-
-The token needs `contents: write` (or `repo` scope) for repositories where pipeline injection will run.
+When `true` and `repo` is a GitHub URL, the platform adds a GitHub Actions workflow to the repository. Requires `github-pipeline-secret` (one-time setup).
 
 ### `dockerfile`
 

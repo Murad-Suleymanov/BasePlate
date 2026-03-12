@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	deployv1alpha1 "easy-deploy/api/v1alpha1"
+	"easy-deploy/internal/credentials"
 	"easy-deploy/internal/injector"
 	"easy-deploy/internal/registry"
 	"os"
@@ -193,7 +194,7 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 	// Always inject pipeline for GitHub repos — workflow builds & pushes to registry, then notifies deploy
 	if owner, repo, ok := injector.ParseGitHubRepo(bs.Spec.Repo); ok {
 		if bs.Annotations == nil || bs.Annotations[annotPipelineInj] == "" {
-			token := os.Getenv("GITHUB_TOKEN")
+			creds := credentials.ResolvePipelineCreds(ctx, r.Client)
 			regURL := os.Getenv("REGISTRY_URL")
 			if regURL == "" {
 				regURL = "registry.easysolution.work"
@@ -202,11 +203,9 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 			if webhookURL == "" {
 				webhookURL = "https://webhook.easysolution.work"
 			}
-			regUser := os.Getenv("REGISTRY_USERNAME")
-			regPass := os.Getenv("REGISTRY_PASSWORD")
-			if err := injector.EnsureWorkflow(token, owner, repo, regURL, bs.Name, webhookURL, bs.Name, bs.Namespace); err != nil {
+			if err := injector.EnsureWorkflow(creds.GitHubToken, owner, repo, regURL, bs.Name, webhookURL, bs.Name, bs.Namespace); err != nil {
 				l.Error(err, "pipeline injection failed", "repo", bs.Spec.Repo)
-			} else if err := injector.EnsureRepoSecrets(token, owner, repo, regUser, regPass); err != nil {
+			} else if err := injector.EnsureRepoSecrets(creds.GitHubToken, owner, repo, creds.RegistryUsername, creds.RegistryPassword); err != nil {
 				l.Error(err, "repo secrets failed", "repo", bs.Spec.Repo)
 			} else {
 				l.Info("pipeline injected", "repo", bs.Spec.Repo)
