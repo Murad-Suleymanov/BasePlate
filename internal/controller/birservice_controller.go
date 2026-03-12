@@ -113,7 +113,16 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 			dep.Spec.Replicas = &replicasCopy
 			dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
 			dep.Spec.Template.ObjectMeta.Labels = labels
-			dep.Spec.Template.Spec.Containers = []corev1.Container{
+
+			// Image internal registry-dəndirsə, pull üçün registry-push secret lazımdır
+			templateSpec := &dep.Spec.Template.Spec
+			if strings.HasPrefix(image, registryURL+"/") {
+				if r.ensureRegistryPushSecret(ctx, bs.Namespace) == nil {
+					templateSpec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: registryPushSecretName}}
+				}
+			}
+
+			templateSpec.Containers = []corev1.Container{
 				{
 					Name:            "app",
 					Image:           image,
