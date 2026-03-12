@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -32,13 +34,14 @@ import (
 )
 
 const (
-	registryURL       = "registry.registry.svc.cluster.local:5000"
-	kanikoImage       = "gcr.io/kaniko-project/executor:latest"
-	labelBuildTag     = "deploy.easydeploy.io/build-tag"
-	labelPurpose      = "deploy.easydeploy.io/purpose"
-	annotRebuild      = "deploy.easydeploy.io/rebuild"
-	annotPipelineInj  = "deploy.easydeploy.io/pipeline-injected"
-	requeueBuild      = 10 * time.Second
+	registryURL            = "registry.registry.svc.cluster.local:5000"
+	kanikoImage            = "gcr.io/kaniko-project/executor:latest"
+	registryPushSecretName = "registry-push"
+	labelBuildTag          = "deploy.easydeploy.io/build-tag"
+	labelPurpose           = "deploy.easydeploy.io/purpose"
+	annotRebuild           = "deploy.easydeploy.io/rebuild"
+	annotPipelineInj       = "deploy.easydeploy.io/pipeline-injected"
+	requeueBuild           = 10 * time.Second
 )
 
 type BirServiceReconciler struct {
@@ -253,6 +256,11 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 	if apierrors.IsNotFound(err) {
 		l.Info("creating Kaniko build job", "repo", bs.Spec.Repo, "image", buildImage)
 
+		if err := r.ensureRegistryPushSecret(ctx, bs.Namespace); err != nil {
+			l.Error(err, "failed to ensure registry push secret")
+			return ctrl.Result{RequeueAfter: requeueBuild}, nil
+		}
+
 		dockerfile := bs.Spec.Dockerfile
 		if dockerfile == "" {
 			dockerfile = "Dockerfile"
@@ -272,6 +280,7 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 			"--destination=" + buildImage,
 			"--insecure",
 			"--cache=false",
+			"--docker-config=/kaniko/.docker/.dockerconfigjson",
 		}
 
 		job = batchv1.Job{
@@ -295,6 +304,23 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 								Name:  "kaniko",
 								Image: kanikoImage,
 								Args:  args,
+								VolumeMounts: []corev1.VolumeMount{
+									{
+										Name:      "docker-config",
+										MountPath: "/kaniko/.docker",
+										ReadOnly:  true,
+									},
+								},
+							},
+						},
+						Volumes: []corev1.Volume{
+							{
+								Name: "docker-config",
+								VolumeSource: corev1.VolumeSource{
+									Secret: &corev1.SecretVolumeSource{
+										SecretName: registryPushSecretName,
+									},
+								},
 							},
 						},
 					},
@@ -352,6 +378,42 @@ func (r *BirServiceReconciler) needsRebuild(bs *deployv1alpha1.BirService, desir
 		return true
 	}
 	return false
+}
+
+func (r *BirServiceReconciler) ensureRegistryPushSecret(ctx context.Context, ns string) error {
+	creds := credentials.ResolvePipelineCreds(ctx, r.Client)
+	auth := base64.StdEncoding.EncodeToString([]byte(creds.RegistryUsername + ":" + creds.RegistryPassword))
+	cfg := map[string]interface{}{
+		"auths": map[string]interface{}{
+			registryURL: map[string]string{
+				"auth": auth,
+			},
+		},
+	}
+	cfgJSON, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: registryPushSecretName, Namespace: ns},
+		Type:       corev1.SecretTypeDockerConfigJson,
+		Data:       map[string][]byte{corev1.DockerConfigJsonKey: cfgJSON},
+	}
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		existing := &corev1.Secret{}
+		err := r.Get(ctx, types.NamespacedName{Name: registryPushSecretName, Namespace: ns}, existing)
+		if err == nil {
+			if string(existing.Data[corev1.DockerConfigJsonKey]) == string(cfgJSON) {
+				return nil
+			}
+			existing.Data[corev1.DockerConfigJsonKey] = cfgJSON
+			return r.Update(ctx, existing)
+		}
+		if apierrors.IsNotFound(err) {
+			return r.Create(ctx, secret)
+		}
+		return err
+	})
 }
 
 func (r *BirServiceReconciler) deleteOldBuildJobs(ctx context.Context, bs *deployv1alpha1.BirService) error {
