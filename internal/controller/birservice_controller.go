@@ -10,7 +10,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
-	autoscalingv2 "k8s.io/api/autoscaling/v2beta2"
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -530,7 +530,7 @@ func (r *BirServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&deployv1alpha1.BirService{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
-		Owns(&autoscalingv2.HorizontalPodAutoscaler{}).
+		Owns(&autoscalingv1.HorizontalPodAutoscaler{}).
 		Owns(&batchv1.Job{}).
 		Complete(r)
 }
@@ -601,7 +601,7 @@ func exposeOrDefault(bs *deployv1alpha1.BirService) bool {
 func (r *BirServiceReconciler) reconcileHPA(ctx context.Context, bs *deployv1alpha1.BirService, depName string, labels map[string]string) error {
 	// replicas verilibsə HPA yoxdur — prioritet replicas-dadır
 	if bs.Spec.Replicas != nil {
-		hpa := &autoscalingv2.HorizontalPodAutoscaler{}
+		hpa := &autoscalingv1.HorizontalPodAutoscaler{}
 		hpaName := fmt.Sprintf("%s-hpa", bs.Name)
 		err := r.Get(ctx, types.NamespacedName{Name: hpaName, Namespace: bs.Namespace}, hpa)
 		if err == nil {
@@ -614,7 +614,7 @@ func (r *BirServiceReconciler) reconcileHPA(ctx context.Context, bs *deployv1alp
 	maxReplicas := bs.Spec.MaxReplicas
 	if minReplicas == nil || maxReplicas == nil {
 		// HPA yoxdursa mövcud HPA-nı sil
-		hpa := &autoscalingv2.HorizontalPodAutoscaler{}
+		hpa := &autoscalingv1.HorizontalPodAutoscaler{}
 		hpaName := fmt.Sprintf("%s-hpa", bs.Name)
 		err := r.Get(ctx, types.NamespacedName{Name: hpaName, Namespace: bs.Namespace}, hpa)
 		if err == nil {
@@ -623,32 +623,22 @@ func (r *BirServiceReconciler) reconcileHPA(ctx context.Context, bs *deployv1alp
 		return client.IgnoreNotFound(err)
 	}
 
-	hpa := &autoscalingv2.HorizontalPodAutoscaler{}
+	hpa := &autoscalingv1.HorizontalPodAutoscaler{}
 	hpa.Name = fmt.Sprintf("%s-hpa", bs.Name)
 	hpa.Namespace = bs.Namespace
 
+	targetCPU := int32(80)
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, hpa, func() error {
 		hpa.ObjectMeta.Labels = mergeStringMap(hpa.ObjectMeta.Labels, labels)
-		hpa.Spec = autoscalingv2.HorizontalPodAutoscalerSpec{
-			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
+		hpa.Spec = autoscalingv1.HorizontalPodAutoscalerSpec{
+			ScaleTargetRef: autoscalingv1.CrossVersionObjectReference{
 				APIVersion: "apps/v1",
 				Kind:       "Deployment",
 				Name:       depName,
 			},
-			MinReplicas: minReplicas,
-			MaxReplicas: *maxReplicas,
-			Metrics: []autoscalingv2.MetricSpec{
-				{
-					Type: autoscalingv2.ResourceMetricSourceType,
-					Resource: &autoscalingv2.ResourceMetricSource{
-						Name: corev1.ResourceCPU,
-						Target: autoscalingv2.MetricTarget{
-							Type:               autoscalingv2.UtilizationMetricType,
-							AverageUtilization: int32Ptr(80),
-						},
-					},
-				},
-			},
+			MinReplicas:                    minReplicas,
+			MaxReplicas:                    *maxReplicas,
+			TargetCPUUtilizationPercentage: &targetCPU,
 		}
 		return ctrl.SetControllerReference(bs, hpa, r.Scheme)
 	})
