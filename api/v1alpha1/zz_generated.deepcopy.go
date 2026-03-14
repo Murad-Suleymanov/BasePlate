@@ -13,6 +13,16 @@ func (in *BirServiceSpec) DeepCopyInto(out *BirServiceSpec) {
 		*out = new(int32)
 		**out = **in
 	}
+	if in.MinReplicas != nil {
+		in, out := &in.MinReplicas, &out.MinReplicas
+		*out = new(int32)
+		**out = **in
+	}
+	if in.MaxReplicas != nil {
+		in, out := &in.MaxReplicas, &out.MaxReplicas
+		*out = new(int32)
+		**out = **in
+	}
 	if in.Port != nil {
 		in, out := &in.Port, &out.Port
 		*out = new(int32)

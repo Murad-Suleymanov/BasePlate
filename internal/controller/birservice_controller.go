@@ -10,6 +10,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2beta2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -77,9 +78,14 @@ func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 }
 
 func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl.Request, bs *deployv1alpha1.BirService, image string) (ctrl.Result, error) {
-	replicas := int32(1)
-	if bs.Spec.Replicas != nil {
-		replicas = *bs.Spec.Replicas
+	useHPA := bs.Spec.MinReplicas != nil && bs.Spec.MaxReplicas != nil
+	var replicas *int32
+	if !useHPA {
+		r := int32(1)
+		if bs.Spec.Replicas != nil {
+			r = *bs.Spec.Replicas
+		}
+		replicas = &r
 	}
 
 	port := int32(8080)
@@ -109,8 +115,10 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, &dep, func() error {
 			dep.ObjectMeta.Labels = mergeStringMap(dep.ObjectMeta.Labels, labels)
 
-			replicasCopy := replicas
-			dep.Spec.Replicas = &replicasCopy
+			// HPA varsa replicas təyin etmərik — HPA idarə edir
+			if replicas != nil {
+				dep.Spec.Replicas = replicas
+			}
 			dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
 			dep.Spec.Template.ObjectMeta.Labels = labels
 
@@ -164,6 +172,10 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		})
 		return err
 	}); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.reconcileHPA(ctx, bs, depName, labels); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -483,6 +495,7 @@ func (r *BirServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&deployv1alpha1.BirService{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Owns(&autoscalingv2.HorizontalPodAutoscaler{}).
 		Owns(&batchv1.Job{}).
 		Complete(r)
 }
@@ -548,6 +561,63 @@ func exposeOrDefault(bs *deployv1alpha1.BirService) bool {
 		return true
 	}
 	return *bs.Spec.Expose
+}
+
+func (r *BirServiceReconciler) reconcileHPA(ctx context.Context, bs *deployv1alpha1.BirService, depName string, labels map[string]string) error {
+	// replicas verilibsə HPA yoxdur — prioritet replicas-dadır
+	if bs.Spec.Replicas != nil {
+		hpa := &autoscalingv2.HorizontalPodAutoscaler{}
+		hpaName := fmt.Sprintf("%s-hpa", bs.Name)
+		err := r.Get(ctx, types.NamespacedName{Name: hpaName, Namespace: bs.Namespace}, hpa)
+		if err == nil {
+			return client.IgnoreNotFound(r.Delete(ctx, hpa))
+		}
+		return client.IgnoreNotFound(err)
+	}
+
+	minReplicas := bs.Spec.MinReplicas
+	maxReplicas := bs.Spec.MaxReplicas
+	if minReplicas == nil || maxReplicas == nil {
+		// HPA yoxdursa mövcud HPA-nı sil
+		hpa := &autoscalingv2.HorizontalPodAutoscaler{}
+		hpaName := fmt.Sprintf("%s-hpa", bs.Name)
+		err := r.Get(ctx, types.NamespacedName{Name: hpaName, Namespace: bs.Namespace}, hpa)
+		if err == nil {
+			return client.IgnoreNotFound(r.Delete(ctx, hpa))
+		}
+		return client.IgnoreNotFound(err)
+	}
+
+	hpa := &autoscalingv2.HorizontalPodAutoscaler{}
+	hpa.Name = fmt.Sprintf("%s-hpa", bs.Name)
+	hpa.Namespace = bs.Namespace
+
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, hpa, func() error {
+		hpa.ObjectMeta.Labels = mergeStringMap(hpa.ObjectMeta.Labels, labels)
+		hpa.Spec = autoscalingv2.HorizontalPodAutoscalerSpec{
+			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
+				APIVersion: "apps/v1",
+				Kind:       "Deployment",
+				Name:       depName,
+			},
+			MinReplicas: minReplicas,
+			MaxReplicas: *maxReplicas,
+			Metrics: []autoscalingv2.MetricSpec{
+				{
+					Type: autoscalingv2.ResourceMetricSourceType,
+					Resource: &autoscalingv2.ResourceMetricSource{
+						Name: corev1.ResourceCPU,
+						Target: autoscalingv2.MetricTarget{
+							Type:               autoscalingv2.UtilizationMetricType,
+							AverageUtilization: int32Ptr(80),
+						},
+					},
+				},
+			},
+		}
+		return ctrl.SetControllerReference(bs, hpa, r.Scheme)
+	})
+	return err
 }
 
 func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deployv1alpha1.BirService, svcName string, svcPort int32) error {

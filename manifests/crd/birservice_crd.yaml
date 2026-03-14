@@ -67,6 +67,17 @@ spec:
                   type: integer
                   format: int32
                   minimum: 0
+                  description: Ignored when minReplicas/maxReplicas are set (HPA).
+                minReplicas:
+                  type: integer
+                  format: int32
+                  minimum: 1
+                  description: HPA minimum replicas. Requires maxReplicas.
+                maxReplicas:
+                  type: integer
+                  format: int32
+                  minimum: 1
+                  description: HPA maximum replicas. Requires minReplicas.
                 port:
                   type: integer
                   format: int32

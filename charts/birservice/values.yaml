@@ -8,10 +8,14 @@ dockerfile: ""
 
 port: 0
 containerPort: 0
-replicas: 1
+# replicas: sabit pod sayı. Yazılmasa və HPA yoxdursa default 1.
+# replicas yazılıbsa HPA yaradılmır (replicas prioritetlidir).
+# minReplicas + maxReplicas: HPA üçün (replicas yazılmayanda).
+# minReplicas: 1
+# maxReplicas: 10
 hostname: ""
 
-# Expose: true = HTTPRoute + DNS (default). false = internal only.
+# expose: true = HTTPRoute + DNS (default), false = daxili ClusterIP.
 expose: true
 
 # Metrics: default true - hər komponent metrik yığır. false = söndür. Or { enabled: true, path: /actuator/prometheus }

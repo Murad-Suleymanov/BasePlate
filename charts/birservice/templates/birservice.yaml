@@ -22,7 +22,18 @@ spec:
 {{- if .Values.dockerfile }}
   dockerfile: {{ .Values.dockerfile | quote }}
 {{- end }}
-  replicas: {{ default 1 .Values.replicas }}
+{{- $min := .Values.minReplicas | default 0 | int }}
+{{- $max := .Values.maxReplicas | default 0 | int }}
+{{- $replicasSet := or (kindIs "float64" .Values.replicas) (kindIs "int" .Values.replicas) }}
+{{- $useHPA := and (gt $min 0) (gt $max 0) (not $replicasSet) }}
+{{- $replicas := .Values.replicas | default 1 | int }}
+{{- if not $useHPA }}
+  replicas: {{ $replicas }}
+{{- end }}
+{{- if $useHPA }}
+  minReplicas: {{ $min }}
+  maxReplicas: {{ $max }}
+{{- end }}
 {{- if .Values.port }}
   port: {{ .Values.port }}
 {{- end }}

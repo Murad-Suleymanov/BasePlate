@@ -30,8 +30,12 @@ type BirServiceSpec struct {
 	// Dockerfile path relative to repo root (default: "Dockerfile"). Only used for git repos.
 	Dockerfile string `json:"dockerfile,omitempty"`
 
-	// Replicas is desired pod replicas (default 1).
+	// Replicas is desired pod replicas (default 1). Ignored when HPA is used (minReplicas/maxReplicas).
 	Replicas *int32 `json:"replicas,omitempty"`
+
+	// MinReplicas/MaxReplicas enable HPA. When both set, Replicas is ignored and HPA controls scaling.
+	MinReplicas *int32 `json:"minReplicas,omitempty"`
+	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
 
 	// Port is the Service port (default 8080).
 	Port *int32 `json:"port,omitempty"`
