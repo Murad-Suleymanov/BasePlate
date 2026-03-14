@@ -257,6 +257,27 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 
 	// After first successful build, use image from registry (pipeline builds on push, notifies via webhook)
 	if bs.Status.BuildStatus == "Succeeded" {
+		if bs.Spec.Port == nil || *bs.Spec.Port == 0 {
+			detected := registry.InspectPort(registryURL, bs.Name, imageTag)
+			if detected == 0 {
+				owner, repo, ok := injector.ParseGitHubRepo(bs.Spec.Repo)
+				if ok {
+					detected = registry.PortFromDockerfile(owner, repo, bs.Spec.Tag, bs.Spec.Dockerfile)
+					if detected > 0 {
+						l.Info("auto-detected port from Dockerfile", "port", detected)
+					}
+				}
+			} else {
+				l.Info("auto-detected port from image", "port", detected)
+			}
+			if detected > 0 {
+				cp := detected
+				bs.Spec.ContainerPort = &cp
+				if err := r.Update(ctx, bs); err != nil {
+					l.Error(err, "failed to persist detected port to BirService")
+				}
+			}
+		}
 		l.Info("using image from registry", "image", buildImage, "tag", imageTag)
 		return r.reconcileDeployment(ctx, req, bs, buildImage)
 	}
@@ -372,10 +393,24 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 		}
 
 		if bs.Spec.Port == nil || *bs.Spec.Port == 0 {
-			if detected := registry.InspectPort(registryURL, bs.Name, imageTag); detected > 0 {
-				l.Info("auto-detected port from image EXPOSE", "port", detected)
-				port := detected
-				bs.Spec.Port = &port
+			detected := registry.InspectPort(registryURL, bs.Name, imageTag)
+			if detected == 0 {
+				owner, repo, ok := injector.ParseGitHubRepo(bs.Spec.Repo)
+				if ok {
+					detected = registry.PortFromDockerfile(owner, repo, bs.Spec.Tag, bs.Spec.Dockerfile)
+					if detected > 0 {
+						l.Info("auto-detected port from Dockerfile", "port", detected)
+					}
+				}
+			} else {
+				l.Info("auto-detected port from image", "port", detected)
+			}
+			if detected > 0 {
+				cp := detected
+				bs.Spec.ContainerPort = &cp
+				if err := r.Update(ctx, bs); err != nil {
+					l.Error(err, "failed to persist detected port to BirService")
+				}
 			}
 		}
 
