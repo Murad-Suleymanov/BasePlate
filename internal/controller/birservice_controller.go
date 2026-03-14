@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -137,6 +138,12 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 					ImagePullPolicy: corev1.PullAlways, // rollout restart-da yeni image çəkilir (:latest və ya :sha)
 					Ports: []corev1.ContainerPort{
 						{ContainerPort: containerPort},
+					},
+					// HPA CPU % üçün request lazımdır (request olmadan "unknown" qalır)
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU: resource.MustParse("100m"),
+						},
 					},
 				},
 			}
