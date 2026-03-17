@@ -1,3 +1,4 @@
+# CRD + Operator — platform öz repo-sunda idarə olunur
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -5,12 +6,13 @@ metadata:
   namespace: argocd
 spec:
   project: default
-  source:
-    repoURL: https://github.com/Murad-Suleymanov/BasePlate
-    targetRevision: HEAD
-    path: manifests
-    directory:
-      recurse: true
+  sources:
+    - repoURL: https://github.com/Murad-Suleymanov/BasePlate
+      targetRevision: HEAD
+      path: manifests/crd
+    - repoURL: https://github.com/Murad-Suleymanov/BasePlate
+      targetRevision: HEAD
+      path: manifests/operator
   destination:
     server: https://kubernetes.default.svc
     namespace: easy-deploy-system

@@ -71,24 +71,22 @@ kubectl create secret generic cloudflare-api-token \
 
 ## Step 4: Deploy the Platform
 
-From the `BasePlate-Infra` repo (cloned in Step 2), apply all ArgoCD applications:
+Apply both roots (one-time bootstrap):
 
 ```bash
+# Infra: gateway, monitoring, cert-manager, dns, registry, argocd-config
 cd BasePlate-Infra
-kubectl apply -n argocd -f argocd/
+kubectl apply -f argocd/application-root.yaml
+
+# Platform: CRD + Operator
+cd ../BasePlate
+kubectl apply -f argocd/application-root.yaml
 ```
 
-This deploys all platform components:
-
-| Application | What It Deploys |
-|------------|----------------|
-| `application-platform.yaml` | CRD + Operator (from BasePlate repo) |
-| `application-infra.yaml` | Gateway, Registry, Webhook manifests (from BasePlate-Infra) |
-| `applicationset-birservices.yaml` | Auto-discovers developer YAMLs in BasePlate-Dev |
-| `application-gateway.yaml` | NGINX Gateway Fabric |
-| `application-cert-manager.yaml` | cert-manager for TLS certificates |
-| `application-monitoring.yaml` | Prometheus + Grafana |
-| `application-external-dns.yaml` | ExternalDNS with Cloudflare provider |
+| Root | Applications |
+|------|--------------|
+| **root-infra** (BasePlate-Infra) | gateway, nginx-gateway-fabric, monitoring, kube-prometheus-stack, metrics-server, cert-manager, external-dns, registry, argocd-config |
+| **root-platform** (BasePlate) | easy-deploy-platform (CRD + Operator) |
 
 ## Step 5: Configure Worker Nodes
 

@@ -289,8 +289,11 @@ kubectl create secret generic cloudflare-api-token \
 ### Step 4: Deploy platform
 
 ```bash
-# From the BasePlate-Infra repo:
-kubectl apply -n argocd -f argocd/
+# 1. Infra root (BasePlate-Infra repo)
+kubectl apply -f argocd/application-root.yaml
+
+# 2. Platform root (BasePlate repo)
+kubectl apply -f argocd/application-root.yaml
 ```
 
 ### Step 5: Configure worker node
