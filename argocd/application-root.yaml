@@ -1,4 +1,4 @@
-# App of Apps — platform app-ləri (BasePlate özünün)
+# App of Apps — platform (argocd/ başlanğıc, manifests/ app-lər)
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -6,13 +6,21 @@ metadata:
   namespace: argocd
 spec:
   project: default
-  source:
-    repoURL: https://github.com/Murad-Suleymanov/BasePlate
-    targetRevision: HEAD
-    path: argocd
-    directory:
-      recurse: true
-      include: '*.yaml'
+  sources:
+    # Platform app-lər: manifests/platform/
+    - repoURL: https://github.com/Murad-Suleymanov/BasePlate
+      targetRevision: HEAD
+      path: manifests
+      directory:
+        recurse: true
+        include: '*-application.yaml'
+    # Özü: argocd/application-root.yaml
+    - repoURL: https://github.com/Murad-Suleymanov/BasePlate
+      targetRevision: HEAD
+      path: argocd
+      directory:
+        recurse: true
+        include: '*.yaml'
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd

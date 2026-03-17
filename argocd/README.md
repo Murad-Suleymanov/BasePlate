@@ -6,8 +6,7 @@ Platform öz App of Apps-ına malikdir.
 
 | Fayl | Məqsəd |
 |------|--------|
-| `application-root.yaml` | root-platform — platform app-ləri yaradır |
-| `application-platform.yaml` | easy-deploy-platform — CRD + Operator |
+| `application-root.yaml` | root-platform — manifests/ + argocd/ (özünü izləyir) |
 
 ### Bootstrap
 
@@ -15,4 +14,6 @@ Platform öz App of Apps-ına malikdir.
 kubectl apply -f argocd/application-root.yaml
 ```
 
-Root `argocd/*.yaml` (application-root istisna) tapır və Application-ları yaradır.
+Root `manifests/*/-application.yaml` + `argocd/*.yaml` tapır və Application-ları yaradır.
+
+Platform Application: `manifests/platform/easy-deploy-platform-application.yaml`
