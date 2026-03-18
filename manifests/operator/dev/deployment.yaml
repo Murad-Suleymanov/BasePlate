@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: easy-deploy-operator
+  namespace: easy-deploy-system
+  labels:
+    app.kubernetes.io/name: easy-deploy-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: easy-deploy-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: easy-deploy-operator
+    spec:
+      serviceAccountName: easy-deploy-operator
+      containers:
+        - name: manager
+          image: ghcr.io/murad-suleymanov/easy-deploy-operator:main
+          imagePullPolicy: Always
+          args:
+            - "--metrics-bind-address=:8080"
+            - "--health-probe-bind-address=:8081"
+          env:
+            - name: BASE_DOMAIN
+              value: "easysolution.work"
+            - name: TARGET_IP
+              value: "116.203.203.121"
+            - name: REGISTRY_URL
+              value: "registry-dev.easysolution.work"
+          envFrom:
+            - secretRef:
+                name: github-pipeline-secret
+                optional: true
+          ports:
+            - name: metrics
+              containerPort: 8080
+            - name: health
+              containerPort: 8081
+            - name: webhook
+              containerPort: 9090
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health

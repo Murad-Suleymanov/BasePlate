@@ -1,8 +1,7 @@
-# CRD + Operator — platform öz repo-sunda idarə olunur
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: easy-deploy-platform
+  name: easy-deploy-platform-dev
   namespace: argocd
 spec:
   project: default
@@ -12,9 +11,9 @@ spec:
       path: manifests/crd
     - repoURL: https://github.com/Murad-Suleymanov/BasePlate
       targetRevision: HEAD
-      path: manifests/operator
+      path: manifests/operator/dev
   destination:
-    server: https://kubernetes.default.svc
+    name: dev-cluster
     namespace: easy-deploy-system
   syncPolicy:
     automated:

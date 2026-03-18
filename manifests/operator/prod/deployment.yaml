@@ -31,7 +31,6 @@ spec:
             - name: REGISTRY_URL
               value: "registry.easysolution.work"
           envFrom:
-            # github-pipeline-secret: GITHUB_TOKEN, REGISTRY_USERNAME, REGISTRY_PASSWORD (one-time)
             - secretRef:
                 name: github-pipeline-secret
                 optional: true
@@ -50,4 +49,3 @@ spec:
             httpGet:
               path: /readyz
               port: health
-

@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: easy-deploy-platform-prod
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: https://github.com/Murad-Suleymanov/BasePlate
+      targetRevision: HEAD
+      path: manifests/crd
+    - repoURL: https://github.com/Murad-Suleymanov/BasePlate
+      targetRevision: HEAD
+      path: manifests/operator/prod
+  destination:
+    name: prod-cluster
+    namespace: easy-deploy-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
