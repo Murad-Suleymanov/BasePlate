@@ -1,19 +1,19 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: easy-deploy-platform-dev
+  name: easy-deploy-platform-prod
   namespace: argocd
 spec:
   project: default
   sources:
     - repoURL: https://github.com/Murad-Suleymanov/BasePlate
       targetRevision: HEAD
-      path: manifests/crd
+      path: prod/crd
     - repoURL: https://github.com/Murad-Suleymanov/BasePlate
       targetRevision: HEAD
-      path: manifests/operator/dev
+      path: prod/operator
   destination:
-    name: dev-cluster
+    server: https://kubernetes.default.svc
     namespace: easy-deploy-system
   syncPolicy:
     automated:

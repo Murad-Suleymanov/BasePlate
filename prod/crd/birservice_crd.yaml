@@ -1,0 +1,118 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: birservices.deploy.easydeploy.io
+spec:
+  group: deploy.easydeploy.io
+  scope: Namespaced
+  names:
+    plural: birservices
+    singular: birservice
+    kind: BirService
+    shortNames:
+      - bs
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Repo
+          type: string
+          jsonPath: .spec.repo
+        - name: Image
+          type: string
+          jsonPath: .spec.image
+        - name: Port
+          type: integer
+          jsonPath: .spec.port
+        - name: Hostname
+          type: string
+          jsonPath: .spec.hostname
+        - name: Available
+          type: integer
+          jsonPath: .status.availableReplicas
+        - name: Build
+          type: string
+          jsonPath: .status.buildStatus
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              properties:
+                image:
+                  type: string
+                repo:
+                  type: string
+                tag:
+                  type: string
+                imageTag:
+                  type: string
+                  description: Rollback üçün əvvəlki SHA (məs. abc1234)
+                dockerfile:
+                  type: string
+                injectPipeline:
+                  type: boolean
+                  description: When true, adds GitHub Actions build workflow to the repo. Requires GITHUB_TOKEN.
+                replicas:
+                  type: integer
+                  format: int32
+                  minimum: 0
+                  description: Ignored when minReplicas/maxReplicas are set (HPA).
+                minReplicas:
+                  type: integer
+                  format: int32
+                  minimum: 1
+                  description: HPA minimum replicas. Requires maxReplicas.
+                maxReplicas:
+                  type: integer
+                  format: int32
+                  minimum: 1
+                  description: HPA maximum replicas. Requires minReplicas.
+                port:
+                  type: integer
+                  format: int32
+                  minimum: 1
+                  maximum: 65535
+                containerPort:
+                  type: integer
+                  format: int32
+                  minimum: 1
+                  maximum: 65535
+                hostname:
+                  type: string
+                expose:
+                  type: boolean
+                  description: If false, no HTTPRoute/DNS (internal only). Default true.
+                metrics:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                    path:
+                      type: string
+                      description: Metrics HTTP path, default /metrics
+            status:
+              type: object
+              properties:
+                availableReplicas:
+                  type: integer
+                  format: int32
+                buildImage:
+                  type: string
+                buildStatus:
+                  type: string
+                buildTag:
+                  type: string
+                lastRebuild:
+                  type: string
+
