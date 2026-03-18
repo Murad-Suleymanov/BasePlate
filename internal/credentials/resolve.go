@@ -9,26 +9,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const (
-	DefaultRegistryUser = "admin"
-	DefaultRegistryPass = "EasyDeploy2026"
-)
-
 // PipelineCreds holds credentials for pipeline injection.
 type PipelineCreds struct {
-	GitHubToken       string
-	RegistryUsername  string
-	RegistryPassword  string
+	GitHubToken      string
+	RegistryUsername string
+	RegistryPassword string
 }
 
 // ResolvePipelineCreds returns credentials for pipeline injection.
 // GITHUB_TOKEN: env → ArgoCD repo secret (argocd namespace, github.com).
-// REGISTRY_*: env → defaults (admin/EasyDeploy2026).
+// REGISTRY_*: env only (from github-pipeline-secret).
 func ResolvePipelineCreds(ctx context.Context, c client.Client) PipelineCreds {
-	out := PipelineCreds{
-		RegistryUsername: DefaultRegistryUser,
-		RegistryPassword: DefaultRegistryPass,
-	}
+	out := PipelineCreds{}
 	if u := getEnv("REGISTRY_USERNAME"); u != "" {
 		out.RegistryUsername = u
 	}

@@ -92,9 +92,9 @@ func putRepoSecret(token, owner, repo, name, keyID, encryptedValue string) error
 	return nil
 }
 
-// EnsureWorkflow creates or updates .github/workflows/build-push.yaml in the repo.
+// EnsureWorkflow creates or updates .github/workflows/build-push-<env>.yaml in the repo.
 // Requires GITHUB_TOKEN with contents: write.
-func EnsureWorkflow(token, owner, repo, registryURL, imageName, webhookURL, serviceName, namespace string) error {
+func EnsureWorkflow(token, owner, repo, registryURL, imageName, webhookURL, serviceName, namespace, env string) error {
 	if token == "" {
 		return fmt.Errorf("GITHUB_TOKEN is required for pipeline injection")
 	}
@@ -107,11 +107,14 @@ func EnsureWorkflow(token, owner, repo, registryURL, imageName, webhookURL, serv
 	if webhookURL == "" {
 		webhookURL = "https://webhook.easysolution.work"
 	}
+	if env == "" {
+		env = "dev"
+	}
 
-	content := workflowContent(registryURL, imageName, webhookURL, serviceName, namespace)
+	content := workflowContent(registryURL, imageName, webhookURL, serviceName, namespace, env)
 	enc := base64.StdEncoding.EncodeToString([]byte(content))
 
-	path := ".github/workflows/build-push.yaml"
+	path := fmt.Sprintf(".github/workflows/build-push-%s.yaml", env)
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s", owner, repo, path)
 
 	// Check if file exists (GET)
@@ -161,7 +164,7 @@ func EnsureWorkflow(token, owner, repo, registryURL, imageName, webhookURL, serv
 	return nil
 }
 
-func workflowContent(registry, imageName, webhookURL, serviceName, namespace string) string {
+func workflowContent(registry, imageName, webhookURL, serviceName, namespace, env string) string {
 	notifyStep := ""
 	if serviceName != "" && namespace != "" && webhookURL != "" {
 		notifyStep = `
@@ -172,8 +175,8 @@ func workflowContent(registry, imageName, webhookURL, serviceName, namespace str
             -d '{"service":"` + serviceName + `","namespace":"` + namespace + `","tag":"${{ steps.vars.outputs.short_sha }}"}'
 `
 	}
-	return `# Injected by Easy Deploy — builds and pushes to platform registry
-name: Build & Push to Easy Deploy Registry
+	return `# Injected by Easy Deploy — builds and pushes to ` + env + ` registry
+name: Build & Push to Easy Deploy Registry (` + env + `)
 
 on:
   push:

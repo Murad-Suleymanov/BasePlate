@@ -234,7 +234,10 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 			if webhookURL == "" {
 				webhookURL = "https://webhook.easysolution.work"
 			}
-			if err := injector.EnsureWorkflow(creds.GitHubToken, owner, repo, regURL, bs.Name, webhookURL, bs.Name, bs.Namespace); err != nil {
+			env := os.Getenv("ENVIRONMENT")
+			if env == "" {
+				l.Error(fmt.Errorf("ENVIRONMENT env var is not set"), "cannot inject pipeline without ENVIRONMENT")
+			} else if err := injector.EnsureWorkflow(creds.GitHubToken, owner, repo, regURL, bs.Name, webhookURL, bs.Name, bs.Namespace, env); err != nil {
 				l.Error(err, "pipeline injection failed", "repo", bs.Spec.Repo)
 			} else if err := injector.EnsureRepoSecrets(creds.GitHubToken, owner, repo, creds.RegistryUsername, creds.RegistryPassword); err != nil {
 				l.Error(err, "repo secrets failed", "repo", bs.Spec.Repo)

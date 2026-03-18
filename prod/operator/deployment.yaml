@@ -24,6 +24,8 @@ spec:
             - "--metrics-bind-address=:8080"
             - "--health-probe-bind-address=:8081"
           env:
+            - name: ENVIRONMENT
+              value: "prod"
             - name: BASE_DOMAIN
               value: "easysolution.work"
             - name: TARGET_IP
