@@ -30,6 +30,8 @@ spec:
               value: "116.203.203.121"
             - name: REGISTRY_URL
               value: "registry.easysolution.work"
+            - name: WEBHOOK_URL
+              value: "https://webhook.easysolution.work"
           envFrom:
             - secretRef:
                 name: github-pipeline-secret
