@@ -4,7 +4,7 @@ metadata:
   name: webhook-route
   namespace: easy-deploy-system
   annotations:
-    external-dns.alpha.kubernetes.io/target: "116.203.203.121"
+    external-dns.alpha.kubernetes.io/target: "178.104.84.100"
 spec:
   parentRefs:
     - name: main-gateway

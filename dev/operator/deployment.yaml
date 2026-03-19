@@ -29,7 +29,7 @@ spec:
             - name: BASE_DOMAIN
               value: "easysolution.work"
             - name: TARGET_IP
-              value: "116.203.203.121"
+              value: "178.104.84.100"
             - name: REGISTRY_URL
               value: "registry-dev.easysolution.work"
             - name: WEBHOOK_URL
