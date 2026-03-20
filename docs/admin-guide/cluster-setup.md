@@ -1,6 +1,6 @@
 # Cluster Setup
 
-Detailed guide for setting up the Easy-Deploy platform from scratch.
+Detailed guide for setting up the BasePlate platform from scratch.
 
 ## Prerequisites
 
@@ -94,17 +94,20 @@ kubectl create secret generic cloudflare-api-token \
 From the `BasePlate-Infra` repo (cloned in Step 2), apply the root ArgoCD application:
 
 ```bash
+export ENV=dev   # or prod
+
 cd BasePlate-Infra
-kubectl apply -f argocd/application-root.yaml
+kubectl apply -f argocd/${ENV}/application-root.yaml
 ```
 
 ### What Each Application Deploys
 
 | Application | Namespace | Components |
 |------------|-----------|------------|
-| `application-platform` | `easy-deploy-system` | BirService CRD + Operator (from BasePlate repo) |
-| `application-infra` | Various | Gateway, Registry, Webhook (from BasePlate-Infra repo) |
-| `applicationset-birservices` | Per-tenant | Auto-discovers developer YAMLs |
+| `root-platform` | `argocd` | Platform root (CRD + Operator apps) |
+| `root-infra` | `argocd` | Infra root (gateway, monitoring, cert-manager, dns, registry, argocd-config) |
+| `easy-deploy-platform` | `easy-deploy-system` | BirService CRD + Operator |
+| `easy-deploy-birservices` (ApplicationSet) | Per-service namespace | Auto-discovers developer YAMLs (`*/dev.yaml` or `*/prod.yaml`) |
 | `gateway` | — | Gateway manifests |
 | `nginx-gateway-fabric` | `nginx-gateway` | NGINX Gateway Fabric |
 | `cert-manager` | `cert-manager` | cert-manager controller + webhooks |

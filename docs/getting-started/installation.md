@@ -1,6 +1,6 @@
 # Installation
 
-This guide covers the one-time setup of the Easy-Deploy platform on a Kubernetes cluster.
+This guide covers the one-time setup of the BasePlate platform on a Kubernetes cluster.
 
 ## Step 1: Install ArgoCD
 
@@ -74,19 +74,21 @@ kubectl create secret generic cloudflare-api-token \
 Apply both roots (one-time bootstrap):
 
 ```bash
+export ENV=dev   # or prod
+
 # Infra: gateway, monitoring, cert-manager, dns, registry, argocd-config
 cd BasePlate-Infra
-kubectl apply -f argocd/application-root.yaml
+kubectl apply -f argocd/${ENV}/application-root.yaml
 
 # Platform: CRD + Operator
 cd ../BasePlate
-kubectl apply -f argocd/application-root.yaml
+kubectl apply -f argocd/${ENV}/application-root.yaml
 ```
 
 | Root | Applications |
 |------|--------------|
 | **root-infra** (BasePlate-Infra) | gateway, nginx-gateway-fabric, monitoring, kube-prometheus-stack, metrics-server, cert-manager, external-dns, registry, argocd-config |
-| **root-platform** (BasePlate) | easy-deploy-platform (CRD + Operator) |
+| **root-platform** (BasePlate) | Platform application (CRD + Operator) |
 
 ## Step 5: Configure Worker Nodes
 

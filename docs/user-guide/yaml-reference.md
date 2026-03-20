@@ -1,6 +1,6 @@
 # YAML Reference
 
-This is the complete reference for the developer YAML format used by Easy-Deploy.
+This is the complete reference for the developer YAML format used by BasePlate.
 
 ## File Location
 
@@ -70,7 +70,7 @@ containerPort: 0
 # Default: 1
 replicas: 1
 
-# HPA config (replicas yazılmayanda)
+# HPA config (used when `replicas` is not set)
 hpa:
   minReplicas: 2
   maxReplicas: 5
@@ -81,8 +81,8 @@ resources:
     memory: 200Mi   # default
     cpu: 75m        # default
   limits:
-    memory: 400Mi   # default: requests-in 2 qatı
-    cpu: 150m       # default: requests-in 2 qatı
+    memory: 400Mi   # default: 2x requests
+    cpu: 150m       # default: 2x requests
 
 # Custom hostname for external access
 # Default: <name>-<namespace>.easysolution.work
