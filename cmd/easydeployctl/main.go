@@ -25,8 +25,25 @@ type SimpleServiceYAML struct {
 	Repo string `json:"repo" yaml:"repo"`
 	Tag  string `json:"tag" yaml:"tag"`
 
-	Port     int32  `json:"port" yaml:"port"`
-	Replicas int32  `json:"replicas" yaml:"replicas"`
+	Port     int32 `json:"port" yaml:"port"`
+	Replicas int32 `json:"replicas" yaml:"replicas"`
+	// Legacy top-level HPA fields (backward compatibility)
+	MinReplicas int32 `json:"minReplicas" yaml:"minReplicas"`
+	MaxReplicas int32 `json:"maxReplicas" yaml:"maxReplicas"`
+	HPA         struct {
+		MinReplicas int32 `json:"minReplicas" yaml:"minReplicas"`
+		MaxReplicas int32 `json:"maxReplicas" yaml:"maxReplicas"`
+	} `json:"hpa" yaml:"hpa"`
+	Resources struct {
+		Requests struct {
+			Memory string `json:"memory" yaml:"memory"`
+			CPU    string `json:"cpu" yaml:"cpu"`
+		} `json:"requests" yaml:"requests"`
+		Limits struct {
+			Memory string `json:"memory" yaml:"memory"`
+			CPU    string `json:"cpu" yaml:"cpu"`
+		} `json:"limits" yaml:"limits"`
+	} `json:"resources" yaml:"resources"`
 	Hostname string `json:"hostname" yaml:"hostname"`
 }
 
@@ -99,11 +116,42 @@ func generate(args []string) {
 		r := s.Replicas
 		replicas = &r
 	}
+	var hpa *deployv1alpha1.HPASpec
+	min := s.HPA.MinReplicas
+	max := s.HPA.MaxReplicas
+	if min == 0 {
+		min = s.MinReplicas
+	}
+	if max == 0 {
+		max = s.MaxReplicas
+	}
+	if min > 0 && max > 0 {
+		hpa = &deployv1alpha1.HPASpec{
+			MinReplicas: &min,
+			MaxReplicas: &max,
+		}
+	}
 
 	var port *int32
 	if s.Port > 0 {
 		p := s.Port
 		port = &p
+	}
+	var resources *deployv1alpha1.ResourceConfigSpec
+	if strings.TrimSpace(s.Resources.Requests.Memory) != "" ||
+		strings.TrimSpace(s.Resources.Requests.CPU) != "" ||
+		strings.TrimSpace(s.Resources.Limits.Memory) != "" ||
+		strings.TrimSpace(s.Resources.Limits.CPU) != "" {
+		resources = &deployv1alpha1.ResourceConfigSpec{
+			Requests: &deployv1alpha1.ResourceValues{
+				Memory: strings.TrimSpace(s.Resources.Requests.Memory),
+				CPU:    strings.TrimSpace(s.Resources.Requests.CPU),
+			},
+			Limits: &deployv1alpha1.ResourceValues{
+				Memory: strings.TrimSpace(s.Resources.Limits.Memory),
+				CPU:    strings.TrimSpace(s.Resources.Limits.CPU),
+			},
+		}
 	}
 
 	bs := deployv1alpha1.BirService{
@@ -116,12 +164,14 @@ func generate(args []string) {
 			Namespace: s.Namespace,
 		},
 		Spec: deployv1alpha1.BirServiceSpec{
-			Image:    s.Image,
-			Repo:     s.Repo,
-			Tag:      s.Tag,
-			Replicas: replicas,
-			Port:     port,
-			Hostname: s.Hostname,
+			Image:     s.Image,
+			Repo:      s.Repo,
+			Tag:       s.Tag,
+			Replicas:  replicas,
+			HPA:       hpa,
+			Resources: resources,
+			Port:      port,
+			Hostname:  s.Hostname,
 		},
 	}
 

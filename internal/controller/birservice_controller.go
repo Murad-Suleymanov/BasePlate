@@ -14,13 +14,13 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -79,7 +79,7 @@ func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 }
 
 func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl.Request, bs *deployv1alpha1.BirService, image string) (ctrl.Result, error) {
-	useHPA := bs.Spec.MinReplicas != nil && bs.Spec.MaxReplicas != nil
+	minReplicas, maxReplicas, useHPA := resolveHPAConfig(bs)
 	var replicas *int32
 	if !useHPA {
 		r := int32(1)
@@ -87,6 +87,10 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 			r = *bs.Spec.Replicas
 		}
 		replicas = &r
+	}
+	resourceReqs, err := resolveContainerResources(bs)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
 
 	port := int32(8080)
@@ -139,12 +143,7 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 					Ports: []corev1.ContainerPort{
 						{ContainerPort: containerPort},
 					},
-					// HPA CPU % üçün request lazımdır (request olmadan "unknown" qalır)
-					Resources: corev1.ResourceRequirements{
-						Requests: corev1.ResourceList{
-							corev1.ResourceCPU: resource.MustParse("100m"),
-						},
-					},
+					Resources: resourceReqs,
 				},
 			}
 
@@ -182,7 +181,7 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
-	if err := r.reconcileHPA(ctx, bs, depName, labels); err != nil {
+	if err := r.reconcileHPA(ctx, bs, depName, labels, minReplicas, maxReplicas); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -608,7 +607,74 @@ func exposeOrDefault(bs *deployv1alpha1.BirService) bool {
 	return *bs.Spec.Expose
 }
 
-func (r *BirServiceReconciler) reconcileHPA(ctx context.Context, bs *deployv1alpha1.BirService, depName string, labels map[string]string) error {
+func resolveHPAConfig(bs *deployv1alpha1.BirService) (*int32, *int32, bool) {
+	// Preferred format: spec.hpa.{minReplicas,maxReplicas}
+	if bs.Spec.HPA != nil && bs.Spec.HPA.MinReplicas != nil && bs.Spec.HPA.MaxReplicas != nil {
+		return bs.Spec.HPA.MinReplicas, bs.Spec.HPA.MaxReplicas, true
+	}
+	// Backward-compatible format: spec.minReplicas/spec.maxReplicas
+	if bs.Spec.MinReplicas != nil && bs.Spec.MaxReplicas != nil {
+		return bs.Spec.MinReplicas, bs.Spec.MaxReplicas, true
+	}
+	return nil, nil, false
+}
+
+func resolveContainerResources(bs *deployv1alpha1.BirService) (corev1.ResourceRequirements, error) {
+	// Defaults requested by product: requests cpu=75m, memory=200Mi.
+	reqCPU := resource.MustParse("75m")
+	reqMem := resource.MustParse("200Mi")
+
+	if bs.Spec.Resources != nil && bs.Spec.Resources.Requests != nil {
+		if cpu := strings.TrimSpace(bs.Spec.Resources.Requests.CPU); cpu != "" {
+			parsed, err := resource.ParseQuantity(cpu)
+			if err != nil {
+				return corev1.ResourceRequirements{}, fmt.Errorf("invalid spec.resources.requests.cpu: %w", err)
+			}
+			reqCPU = parsed
+		}
+		if mem := strings.TrimSpace(bs.Spec.Resources.Requests.Memory); mem != "" {
+			parsed, err := resource.ParseQuantity(mem)
+			if err != nil {
+				return corev1.ResourceRequirements{}, fmt.Errorf("invalid spec.resources.requests.memory: %w", err)
+			}
+			reqMem = parsed
+		}
+	}
+
+	// Limits default to 2x of final requests, unless explicitly provided.
+	limCPU := *resource.NewMilliQuantity(reqCPU.MilliValue()*2, resource.DecimalSI)
+	limMem := *resource.NewQuantity(reqMem.Value()*2, resource.BinarySI)
+
+	if bs.Spec.Resources != nil && bs.Spec.Resources.Limits != nil {
+		if cpu := strings.TrimSpace(bs.Spec.Resources.Limits.CPU); cpu != "" {
+			parsed, err := resource.ParseQuantity(cpu)
+			if err != nil {
+				return corev1.ResourceRequirements{}, fmt.Errorf("invalid spec.resources.limits.cpu: %w", err)
+			}
+			limCPU = parsed
+		}
+		if mem := strings.TrimSpace(bs.Spec.Resources.Limits.Memory); mem != "" {
+			parsed, err := resource.ParseQuantity(mem)
+			if err != nil {
+				return corev1.ResourceRequirements{}, fmt.Errorf("invalid spec.resources.limits.memory: %w", err)
+			}
+			limMem = parsed
+		}
+	}
+
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    reqCPU,
+			corev1.ResourceMemory: reqMem,
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    limCPU,
+			corev1.ResourceMemory: limMem,
+		},
+	}, nil
+}
+
+func (r *BirServiceReconciler) reconcileHPA(ctx context.Context, bs *deployv1alpha1.BirService, depName string, labels map[string]string, minReplicas *int32, maxReplicas *int32) error {
 	// replicas verilibsə HPA yoxdur — prioritet replicas-dadır
 	if bs.Spec.Replicas != nil {
 		hpa := &autoscalingv1.HorizontalPodAutoscaler{}
@@ -620,8 +686,6 @@ func (r *BirServiceReconciler) reconcileHPA(ctx context.Context, bs *deployv1alp
 		return client.IgnoreNotFound(err)
 	}
 
-	minReplicas := bs.Spec.MinReplicas
-	maxReplicas := bs.Spec.MaxReplicas
 	if minReplicas == nil || maxReplicas == nil {
 		// HPA yoxdursa mövcud HPA-nı sil
 		hpa := &autoscalingv1.HorizontalPodAutoscaler{}

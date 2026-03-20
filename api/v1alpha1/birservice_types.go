@@ -36,6 +36,8 @@ type BirServiceSpec struct {
 	// MinReplicas/MaxReplicas enable HPA. When both set, Replicas is ignored and HPA controls scaling.
 	MinReplicas *int32 `json:"minReplicas,omitempty"`
 	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
+	// HPA config (preferred format). When both set, Replicas is ignored and HPA controls scaling.
+	HPA *HPASpec `json:"hpa,omitempty"`
 
 	// Port is the Service port (default 8080).
 	Port *int32 `json:"port,omitempty"`
@@ -55,6 +57,25 @@ type BirServiceSpec struct {
 	// Omit or false: no ServiceMonitor. true: enabled with path /metrics.
 	// Object form: { enabled: true, path: /actuator/prometheus }
 	Metrics *MetricsSpec `json:"metrics,omitempty"`
+
+	// Resources configures container requests/limits.
+	// Defaults when omitted: requests(cpu=75m,memory=200Mi), limits are 2x requests.
+	Resources *ResourceConfigSpec `json:"resources,omitempty"`
+}
+
+type HPASpec struct {
+	MinReplicas *int32 `json:"minReplicas,omitempty"`
+	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
+}
+
+type ResourceConfigSpec struct {
+	Requests *ResourceValues `json:"requests,omitempty"`
+	Limits   *ResourceValues `json:"limits,omitempty"`
+}
+
+type ResourceValues struct {
+	Memory string `json:"memory,omitempty"`
+	CPU    string `json:"cpu,omitempty"`
 }
 
 // MetricsSpec configures Prometheus scraping for custom application metrics.

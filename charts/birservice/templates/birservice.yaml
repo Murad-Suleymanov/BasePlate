@@ -22,8 +22,10 @@ spec:
 {{- if .Values.dockerfile }}
   dockerfile: {{ .Values.dockerfile | quote }}
 {{- end }}
-{{- $min := .Values.minReplicas | default 0 | int }}
-{{- $max := .Values.maxReplicas | default 0 | int }}
+{{- $min := (dig "hpa" "minReplicas" 0 .Values) | int }}
+{{- $max := (dig "hpa" "maxReplicas" 0 .Values) | int }}
+{{- if eq $min 0 }}{{- $min = (.Values.minReplicas | default 0 | int) }}{{- end }}
+{{- if eq $max 0 }}{{- $max = (.Values.maxReplicas | default 0 | int) }}{{- end }}
 {{- $replicasSet := or (kindIs "float64" .Values.replicas) (kindIs "int" .Values.replicas) }}
 {{- $useHPA := and (gt $min 0) (gt $max 0) (not $replicasSet) }}
 {{- $replicas := .Values.replicas | default 1 | int }}
@@ -31,8 +33,34 @@ spec:
   replicas: {{ $replicas }}
 {{- end }}
 {{- if $useHPA }}
-  minReplicas: {{ $min }}
-  maxReplicas: {{ $max }}
+  hpa:
+    minReplicas: {{ $min }}
+    maxReplicas: {{ $max }}
+{{- end }}
+{{- $reqMem := (dig "resources" "requests" "memory" "" .Values | toString | trim) }}
+{{- $reqCPU := (dig "resources" "requests" "cpu" "" .Values | toString | trim) }}
+{{- $limMem := (dig "resources" "limits" "memory" "" .Values | toString | trim) }}
+{{- $limCPU := (dig "resources" "limits" "cpu" "" .Values | toString | trim) }}
+{{- if or $reqMem $reqCPU $limMem $limCPU }}
+  resources:
+{{- if or $reqMem $reqCPU }}
+    requests:
+{{- if $reqMem }}
+      memory: {{ $reqMem | quote }}
+{{- end }}
+{{- if $reqCPU }}
+      cpu: {{ $reqCPU | quote }}
+{{- end }}
+{{- end }}
+{{- if or $limMem $limCPU }}
+    limits:
+{{- if $limMem }}
+      memory: {{ $limMem | quote }}
+{{- end }}
+{{- if $limCPU }}
+      cpu: {{ $limCPU | quote }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- if .Values.port }}
   port: {{ .Values.port }}

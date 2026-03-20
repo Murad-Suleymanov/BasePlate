@@ -78,6 +78,36 @@ spec:
                   format: int32
                   minimum: 1
                   description: HPA maximum replicas. Requires minReplicas.
+                hpa:
+                  type: object
+                  description: Preferred HPA format.
+                  properties:
+                    minReplicas:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                    maxReplicas:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                resources:
+                  type: object
+                  description: Container resource requests/limits.
+                  properties:
+                    requests:
+                      type: object
+                      properties:
+                        memory:
+                          type: string
+                        cpu:
+                          type: string
+                    limits:
+                      type: object
+                      properties:
+                        memory:
+                          type: string
+                        cpu:
+                          type: string
                 port:
                   type: integer
                   format: int32

@@ -70,6 +70,20 @@ containerPort: 0
 # Default: 1
 replicas: 1
 
+# HPA config (replicas yazılmayanda)
+hpa:
+  minReplicas: 2
+  maxReplicas: 5
+
+# Container resources
+resources:
+  requests:
+    memory: 200Mi   # default
+    cpu: 75m        # default
+  limits:
+    memory: 400Mi   # default: requests-in 2 qatı
+    cpu: 150m       # default: requests-in 2 qatı
+
 # Custom hostname for external access
 # Default: <name>-<namespace>.easysolution.work
 hostname: ""
@@ -170,6 +184,39 @@ replicas: 3
 ```
 
 Default: `1`
+
+### `hpa`
+
+Horizontal Pod Autoscaler config. Use this when you want autoscaling instead of fixed `replicas`.
+
+```yaml
+hpa:
+  minReplicas: 2
+  maxReplicas: 10
+```
+
+!!! note
+    If `replicas` is set, it takes priority and HPA is not created.
+
+### `resources`
+
+Container resource requests/limits.
+
+```yaml
+resources:
+  requests:
+    memory: 300Mi
+    cpu: 100m
+  limits:
+    memory: 600Mi
+    cpu: 200m
+```
+
+Defaults when not provided:
+
+- `requests.memory: 200Mi`
+- `requests.cpu: 75m`
+- `limits` are calculated as `2x requests`
 
 ### `hostname`
 

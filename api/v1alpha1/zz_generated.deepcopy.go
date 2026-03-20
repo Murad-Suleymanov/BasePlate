@@ -23,6 +23,11 @@ func (in *BirServiceSpec) DeepCopyInto(out *BirServiceSpec) {
 		*out = new(int32)
 		**out = **in
 	}
+	if in.HPA != nil {
+		in, out := &in.HPA, &out.HPA
+		*out = new(HPASpec)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.Port != nil {
 		in, out := &in.Port, &out.Port
 		*out = new(int32)
@@ -43,6 +48,11 @@ func (in *BirServiceSpec) DeepCopyInto(out *BirServiceSpec) {
 		*out = new(MetricsSpec)
 		**out = **in
 	}
+	if in.Resources != nil {
+		in, out := &in.Resources, &out.Resources
+		*out = new(ResourceConfigSpec)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.InjectPipeline != nil {
 		in, out := &in.InjectPipeline, &out.InjectPipeline
 		*out = new(bool)
@@ -59,6 +69,65 @@ func (in *MetricsSpec) DeepCopy() *MetricsSpec {
 		return nil
 	}
 	out := new(MetricsSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *HPASpec) DeepCopyInto(out *HPASpec) {
+	*out = *in
+	if in.MinReplicas != nil {
+		in, out := &in.MinReplicas, &out.MinReplicas
+		*out = new(int32)
+		**out = **in
+	}
+	if in.MaxReplicas != nil {
+		in, out := &in.MaxReplicas, &out.MaxReplicas
+		*out = new(int32)
+		**out = **in
+	}
+}
+
+func (in *HPASpec) DeepCopy() *HPASpec {
+	if in == nil {
+		return nil
+	}
+	out := new(HPASpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *ResourceValues) DeepCopyInto(out *ResourceValues) {
+	*out = *in
+}
+
+func (in *ResourceValues) DeepCopy() *ResourceValues {
+	if in == nil {
+		return nil
+	}
+	out := new(ResourceValues)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *ResourceConfigSpec) DeepCopyInto(out *ResourceConfigSpec) {
+	*out = *in
+	if in.Requests != nil {
+		in, out := &in.Requests, &out.Requests
+		*out = new(ResourceValues)
+		**out = **in
+	}
+	if in.Limits != nil {
+		in, out := &in.Limits, &out.Limits
+		*out = new(ResourceValues)
+		**out = **in
+	}
+}
+
+func (in *ResourceConfigSpec) DeepCopy() *ResourceConfigSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(ResourceConfigSpec)
 	in.DeepCopyInto(out)
 	return out
 }

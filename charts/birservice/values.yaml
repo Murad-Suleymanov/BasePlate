@@ -10,7 +10,20 @@ port: 0
 containerPort: 0
 # replicas: sabit pod sayı. Yazılmasa və HPA yoxdursa default 1.
 # replicas yazılıbsa HPA yaradılmır (replicas prioritetlidir).
-# minReplicas + maxReplicas: HPA üçün (replicas yazılmayanda).
+hpa:
+  # minReplicas + maxReplicas: HPA üçün (replicas yazılmayanda).
+  minReplicas: 0
+  maxReplicas: 0
+resources:
+  requests:
+    # Yazılmasa default: memory=200Mi, cpu=75m
+    memory: ""
+    cpu: ""
+  limits:
+    # Yazılmasa default: requests-in 2 qatı
+    memory: ""
+    cpu: ""
+# Legacy fields (backward compatibility):
 # minReplicas: 1
 # maxReplicas: 10
 hostname: ""
