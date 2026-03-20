@@ -53,8 +53,16 @@ type BirServiceReconciler struct {
 	TargetIP   string
 }
 
-func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res ctrl.Result, err error) {
 	l := log.FromContext(ctx)
+	start := time.Now()
+	reconcileInflight.WithLabelValues(controllerName).Inc()
+	defer func() {
+		reconcileInflight.WithLabelValues(controllerName).Dec()
+		result := classifyReconcileResult(res, err)
+		reconcileTotal.WithLabelValues(controllerName, result).Inc()
+		reconcileDuration.WithLabelValues(controllerName, result).Observe(time.Since(start).Seconds())
+	}()
 
 	var bs deployv1alpha1.BirService
 	if err := r.Get(ctx, req.NamespacedName, &bs); err != nil {
@@ -507,6 +515,7 @@ func (r *BirServiceReconciler) deleteOldBuildJobs(ctx context.Context, bs *deplo
 }
 
 func (r *BirServiceReconciler) updateBuildStatus(ctx context.Context, req ctrl.Request, bs *deployv1alpha1.BirService, image, status, tag string) (ctrl.Result, error) {
+	buildStatusTotal.WithLabelValues(strings.ToLower(status)).Inc()
 	return ctrl.Result{}, retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		var latest deployv1alpha1.BirService
 		if err := r.Get(ctx, req.NamespacedName, &latest); err != nil {
@@ -535,6 +544,7 @@ func sanitizeK8sName(s string) string {
 }
 
 func (r *BirServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	registerControllerMetrics()
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&deployv1alpha1.BirService{}).
 		Owns(&appsv1.Deployment{}).
@@ -848,4 +858,14 @@ func mergeStringMap(dst, src map[string]string) map[string]string {
 		dst[k] = v
 	}
 	return dst
+}
+
+func classifyReconcileResult(res ctrl.Result, err error) string {
+	if err != nil {
+		return "error"
+	}
+	if res.Requeue || res.RequeueAfter > 0 {
+		return "requeue"
+	}
+	return "success"
 }

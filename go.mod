@@ -6,6 +6,7 @@ require (
 	github.com/go-logr/logr v0.4.0 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/jefflinse/githubsecret v1.0.2
+	github.com/prometheus/client_golang v1.7.1 // indirect
 	k8s.io/api v0.20.15
 	k8s.io/apimachinery v0.20.15
 	k8s.io/client-go v0.20.15
