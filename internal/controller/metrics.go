@@ -54,5 +54,16 @@ func registerControllerMetrics() {
 			reconcileInflight,
 			buildStatusTotal,
 		)
+
+		// Pre-create common label combinations so metrics are visible
+		// even before the first reconcile/build event happens.
+		for _, result := range []string{"success", "error", "requeue"} {
+			reconcileTotal.WithLabelValues(controllerName, result).Add(0)
+			_, _ = reconcileDuration.GetMetricWithLabelValues(controllerName, result)
+		}
+		reconcileInflight.WithLabelValues(controllerName).Set(0)
+		for _, status := range []string{"building", "succeeded", "failed", "error"} {
+			buildStatusTotal.WithLabelValues(status).Add(0)
+		}
 	})
 }
