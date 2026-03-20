@@ -51,7 +51,7 @@ func main() {
 		ctrl.Log.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
-
+	//comment for trigger pipeline
 	baseDomain := os.Getenv("BASE_DOMAIN")
 	targetIP := os.Getenv("TARGET_IP")
 	if baseDomain != "" {
