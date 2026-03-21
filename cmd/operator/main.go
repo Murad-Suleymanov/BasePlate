@@ -55,6 +55,7 @@ func main() {
 	baseDomain := os.Getenv("BASE_DOMAIN")
 	targetIP := os.Getenv("TARGET_IP")
 	registryURL := os.Getenv("REGISTRY_URL")
+	environment := os.Getenv("ENVIRONMENT")
 	if baseDomain != "" {
 		ctrl.Log.Info("auto-hostname enabled", "baseDomain", baseDomain, "targetIP", targetIP)
 	}
@@ -68,6 +69,7 @@ func main() {
 		BaseDomain:  baseDomain,
 		TargetIP:    targetIP,
 		RegistryURL: registryURL,
+		Environment: environment,
 	}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.Error(err, "unable to create controller", "controller", "BirService")
 		os.Exit(1)

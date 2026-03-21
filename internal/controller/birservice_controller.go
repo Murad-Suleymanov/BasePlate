@@ -52,6 +52,7 @@ type BirServiceReconciler struct {
 	BaseDomain  string
 	TargetIP    string
 	RegistryURL string
+	Environment string
 }
 
 func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res ctrl.Result, err error) {
@@ -620,7 +621,11 @@ func (r *BirServiceReconciler) resolveHostname(bs *deployv1alpha1.BirService) st
 		return bs.Spec.Hostname
 	}
 	if r.BaseDomain != "" {
-		return fmt.Sprintf("%s-%s.%s", bs.Name, bs.Namespace, r.BaseDomain)
+		env := strings.TrimSpace(r.Environment)
+		if env == "" {
+			env = bs.Namespace
+		}
+		return fmt.Sprintf("%s-%s.%s", bs.Name, env, r.BaseDomain)
 	}
 	return ""
 }
