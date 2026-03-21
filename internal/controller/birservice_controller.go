@@ -36,7 +36,7 @@ import (
 )
 
 const (
-	registryURL            = "registry.registry.svc.cluster.local:5000"
+	defaultRegistryURL     = "registry.registry.svc.cluster.local:5000"
 	kanikoImage            = "gcr.io/kaniko-project/executor:latest"
 	registryPushSecretName = "registry-push"
 	labelBuildTag          = "deploy.easydeploy.io/build-tag"
@@ -48,9 +48,10 @@ const (
 
 type BirServiceReconciler struct {
 	client.Client
-	Scheme     *runtime.Scheme
-	BaseDomain string
-	TargetIP   string
+	Scheme      *runtime.Scheme
+	BaseDomain  string
+	TargetIP    string
+	RegistryURL string
 }
 
 func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res ctrl.Result, err error) {
@@ -137,7 +138,7 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 
 			// Image internal registry-dəndirsə, pull üçün registry-push secret lazımdır
 			templateSpec := &dep.Spec.Template.Spec
-			if strings.HasPrefix(image, registryURL+"/") {
+			if strings.HasPrefix(image, r.effectiveRegistryURL()+"/") {
 				if r.ensureRegistryPushSecret(ctx, bs.Namespace) == nil {
 					templateSpec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: registryPushSecretName}}
 				}
@@ -270,6 +271,7 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 	} else if bs.Status.BuildStatus == "Succeeded" && bs.Status.BuildTag != "" {
 		imageTag = bs.Status.BuildTag
 	}
+	registryURL := r.effectiveRegistryURL()
 	buildImage := fmt.Sprintf("%s/%s:%s", registryURL, bs.Name, imageTag)
 
 	// After first successful build, use image from registry (pipeline builds on push, notifies via webhook)
@@ -457,6 +459,10 @@ func (r *BirServiceReconciler) needsRebuild(bs *deployv1alpha1.BirService, desir
 
 func (r *BirServiceReconciler) ensureRegistryPushSecret(ctx context.Context, ns string) error {
 	creds := credentials.ResolvePipelineCreds(ctx, r.Client)
+	if strings.TrimSpace(creds.RegistryUsername) == "" || strings.TrimSpace(creds.RegistryPassword) == "" {
+		return fmt.Errorf("registry credentials are empty: set REGISTRY_USERNAME and REGISTRY_PASSWORD in github-pipeline-secret")
+	}
+	registryURL := r.effectiveRegistryURL()
 	auth := base64.StdEncoding.EncodeToString([]byte(creds.RegistryUsername + ":" + creds.RegistryPassword))
 	cfg := map[string]interface{}{
 		"auths": map[string]interface{}{
@@ -478,6 +484,7 @@ func (r *BirServiceReconciler) ensureRegistryPushSecret(ctx context.Context, ns 
 		existing := &corev1.Secret{}
 		err := r.Get(ctx, types.NamespacedName{Name: registryPushSecretName, Namespace: ns}, existing)
 		if err == nil {
+			existing.Type = corev1.SecretTypeDockerConfigJson
 			if string(existing.Data[corev1.DockerConfigJsonKey]) == string(cfgJSON) {
 				return nil
 			}
@@ -489,6 +496,14 @@ func (r *BirServiceReconciler) ensureRegistryPushSecret(ctx context.Context, ns 
 		}
 		return err
 	})
+}
+
+func (r *BirServiceReconciler) effectiveRegistryURL() string {
+	v := strings.TrimSpace(r.RegistryURL)
+	if v == "" {
+		return defaultRegistryURL
+	}
+	return strings.TrimSuffix(v, "/")
 }
 
 func (r *BirServiceReconciler) deleteOldBuildJobs(ctx context.Context, bs *deployv1alpha1.BirService) error {

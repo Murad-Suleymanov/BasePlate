@@ -54,15 +54,20 @@ func main() {
 	//comment for trigger pipeline
 	baseDomain := os.Getenv("BASE_DOMAIN")
 	targetIP := os.Getenv("TARGET_IP")
+	registryURL := os.Getenv("REGISTRY_URL")
 	if baseDomain != "" {
 		ctrl.Log.Info("auto-hostname enabled", "baseDomain", baseDomain, "targetIP", targetIP)
 	}
+	if registryURL != "" {
+		ctrl.Log.Info("registry override enabled", "registryURL", registryURL)
+	}
 
 	if err := (&controller.BirServiceReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		BaseDomain: baseDomain,
-		TargetIP:   targetIP,
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		BaseDomain:  baseDomain,
+		TargetIP:    targetIP,
+		RegistryURL: registryURL,
 	}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.Error(err, "unable to create controller", "controller", "BirService")
 		os.Exit(1)

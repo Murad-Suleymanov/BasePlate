@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -112,7 +113,7 @@ type BuildCompleteHandler struct {
 	Client client.Client
 }
 
-const inClusterRegistry = "registry.registry.svc.cluster.local:5000"
+const defaultRegistryURL = "registry.registry.svc.cluster.local:5000"
 
 type buildCompletePayload struct {
 	Service   string `json:"service"`
@@ -146,7 +147,12 @@ func (h *BuildCompleteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	}
 
 	depName := payload.Service + "-deploy"
-	image := inClusterRegistry + "/" + payload.Service + ":" + payload.Tag
+	registryURL := strings.TrimSpace(os.Getenv("REGISTRY_URL"))
+	if registryURL == "" {
+		registryURL = defaultRegistryURL
+	}
+	registryURL = strings.TrimSuffix(registryURL, "/")
+	image := registryURL + "/" + payload.Service + ":" + payload.Tag
 	l.Info("build complete, deploying", "deployment", depName, "namespace", payload.Namespace, "image", image)
 
 	// Patch deployment with new image (tag-based, rollback üçün)
