@@ -18,7 +18,7 @@ spec:
       serviceAccountName: easy-deploy-operator
       containers:
         - name: manager
-          image: ghcr.io/murad-suleymanov/easy-deploy-operator:bc9c9b98a020ecb78dc3581f5186dc723a1c1643
+          image: ghcr.io/murad-suleymanov/easy-deploy-operator:064f2d23b62ed24f6c4c41c58e37badd6d701da6
           imagePullPolicy: Always
           args:
             - "--metrics-bind-address=:8080"
