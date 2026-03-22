@@ -135,4 +135,3 @@ spec:
                   type: string
                 lastRebuild:
                   type: string
-

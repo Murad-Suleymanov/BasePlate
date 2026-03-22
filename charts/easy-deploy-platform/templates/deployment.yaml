@@ -2,11 +2,11 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: easy-deploy-operator
-  namespace: easy-deploy-system
+  namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: easy-deploy-operator
 spec:
-  replicas: 1
+  replicas: {{ .Values.operator.replicas }}
   selector:
     matchLabels:
       app.kubernetes.io/name: easy-deploy-operator
@@ -18,22 +18,22 @@ spec:
       serviceAccountName: easy-deploy-operator
       containers:
         - name: manager
-          image: ghcr.io/murad-suleymanov/easy-deploy-operator:4043755936e880292bff49e40224e6c65f57395e
+          image: {{ .Values.operator.image }}
           imagePullPolicy: Always
           args:
             - "--metrics-bind-address=:8080"
             - "--health-probe-bind-address=:8081"
           env:
             - name: ENVIRONMENT
-              value: "dev"
+              value: {{ .Values.environment | quote }}
             - name: BASE_DOMAIN
-              value: "easysolution.work"
+              value: {{ .Values.baseDomain | quote }}
             - name: TARGET_IP
-              value: "178.104.84.100"
+              value: {{ .Values.targetIP | quote }}
             - name: REGISTRY_URL
-              value: "registry-dev.easysolution.work"
+              value: {{ .Values.registryURL | quote }}
             - name: WEBHOOK_URL
-              value: "https://webhook-dev.easysolution.work"
+              value: "https://{{ .Values.webhookHostname }}"
           envFrom:
             - secretRef:
                 name: github-pipeline-secret
