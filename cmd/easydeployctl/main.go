@@ -27,10 +27,7 @@ type SimpleServiceYAML struct {
 
 	Port     int32 `json:"port" yaml:"port"`
 	Replicas int32 `json:"replicas" yaml:"replicas"`
-	// Legacy top-level HPA fields (backward compatibility)
-	MinReplicas int32 `json:"minReplicas" yaml:"minReplicas"`
-	MaxReplicas int32 `json:"maxReplicas" yaml:"maxReplicas"`
-	HPA         struct {
+	HPA      struct {
 		MinReplicas int32 `json:"minReplicas" yaml:"minReplicas"`
 		MaxReplicas int32 `json:"maxReplicas" yaml:"maxReplicas"`
 	} `json:"hpa" yaml:"hpa"`
@@ -119,12 +116,6 @@ func generate(args []string) {
 	var hpa *deployv1alpha1.HPASpec
 	min := s.HPA.MinReplicas
 	max := s.HPA.MaxReplicas
-	if min == 0 {
-		min = s.MinReplicas
-	}
-	if max == 0 {
-		max = s.MaxReplicas
-	}
 	if min > 0 && max > 0 {
 		hpa = &deployv1alpha1.HPASpec{
 			MinReplicas: &min,

@@ -638,13 +638,9 @@ func exposeOrDefault(bs *deployv1alpha1.BirService) bool {
 }
 
 func resolveHPAConfig(bs *deployv1alpha1.BirService) (*int32, *int32, bool) {
-	// Preferred format: spec.hpa.{minReplicas,maxReplicas}
+	// Strict format: spec.hpa.{minReplicas,maxReplicas}
 	if bs.Spec.HPA != nil && bs.Spec.HPA.MinReplicas != nil && bs.Spec.HPA.MaxReplicas != nil {
 		return bs.Spec.HPA.MinReplicas, bs.Spec.HPA.MaxReplicas, true
-	}
-	// Backward-compatible format: spec.minReplicas/spec.maxReplicas
-	if bs.Spec.MinReplicas != nil && bs.Spec.MaxReplicas != nil {
-		return bs.Spec.MinReplicas, bs.Spec.MaxReplicas, true
 	}
 	return nil, nil, false
 }

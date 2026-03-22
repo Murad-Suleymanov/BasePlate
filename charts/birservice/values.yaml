@@ -23,9 +23,6 @@ resources:
     # Yazılmasa default: requests-in 2 qatı
     memory: ""
     cpu: ""
-# Legacy fields (backward compatibility):
-# minReplicas: 1
-# maxReplicas: 10
 hostname: ""
 
 # expose: true = HTTPRoute + DNS (default), false = daxili ClusterIP.
