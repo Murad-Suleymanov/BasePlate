@@ -1,9 +1,255 @@
-environment: prod
-baseDomain: easysolution.work
-targetIP: ""
-registryURL: ""
-webhookHostname: ""
+name: easy-deploy-operator
 
 operator:
+  containerName: manager
   image: ghcr.io/murad-suleymanov/easy-deploy-operator:latest
+  imagePullPolicy: Always
   replicas: 1
+
+  args:
+    metricsBindAddress:
+      enabled: true
+      value: ":8080"
+    healthProbeBindAddress:
+      enabled: true
+      value: ":8081"
+  extraArgs: []
+
+  env:
+    environment:
+      enabled: true
+      value: prod
+    baseDomain:
+      enabled: true
+      value: easysolution.work
+    targetIP:
+      enabled: true
+      value: ""
+    registryURL:
+      enabled: true
+      value: ""
+    webhookURL:
+      enabled: true
+      value: ""
+  extraEnv: []
+
+  envFrom:
+    githubPipelineSecret:
+      enabled: true
+      name: github-pipeline-secret
+      optional: true
+  extraEnvFrom: []
+
+  ports:
+    metrics:
+      enabled: true
+      containerPort: 8080
+    health:
+      enabled: true
+      containerPort: 8081
+    webhook:
+      enabled: true
+      containerPort: 9090
+  extraPorts: []
+
+  probes:
+    liveness:
+      enabled: true
+      path: /healthz
+      port: health
+    readiness:
+      enabled: true
+      path: /readyz
+      port: health
+
+webhook:
+  enabled: true
+  service:
+    name: easy-deploy-webhook
+    port: 9090
+    targetPort: 9090
+  route:
+    name: webhook-route
+    targetIP: ""
+    hostname: ""
+    pathPrefix: /webhook
+  gateway:
+    name: main-gateway
+    namespace: nginx-gateway
+    sectionName: https
+
+rbac:
+  clusterRole:
+    name: easy-deploy-operator
+    rules:
+      birservices:
+        enabled: true
+        apiGroups: ["deploy.easydeploy.io"]
+        resources: ["birservices"]
+        verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      birservicesStatus:
+        enabled: true
+        apiGroups: ["deploy.easydeploy.io"]
+        resources: ["birservices/status"]
+        verbs: ["get", "update", "patch"]
+      deployments:
+        enabled: true
+        apiGroups: ["apps"]
+        resources: ["deployments"]
+        verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      hpa:
+        enabled: true
+        apiGroups: ["autoscaling"]
+        resources: ["horizontalpodautoscalers"]
+        verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      servicesSecrets:
+        enabled: true
+        apiGroups: [""]
+        resources: ["services", "secrets"]
+        verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      jobs:
+        enabled: true
+        apiGroups: ["batch"]
+        resources: ["jobs"]
+        verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      httproutes:
+        enabled: true
+        apiGroups: ["gateway.networking.k8s.io"]
+        resources: ["httproutes"]
+        verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      servicemonitors:
+        enabled: true
+        apiGroups: ["monitoring.coreos.com"]
+        resources: ["servicemonitors"]
+        verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    extraRules: []
+  clusterRoleBinding:
+    name: easy-deploy-operator
+  argocdRole:
+    name: easy-deploy-read-argocd-repos
+    namespace: argocd
+    rules:
+      secrets:
+        enabled: true
+        apiGroups: [""]
+        resources: ["secrets"]
+        verbs: ["get", "list"]
+    extraRules: []
+  argocdRoleBinding:
+    name: easy-deploy-read-argocd-repos
+
+crd:
+  name: birservices.deploy.easydeploy.io
+  group: deploy.easydeploy.io
+  scope: Namespaced
+  names:
+    plural: birservices
+    singular: birservice
+    kind: BirService
+    shortNames:
+      - bs
+  version: v1alpha1
+  additionalPrinterColumns:
+    - name: Repo
+      type: string
+      jsonPath: .spec.repo
+    - name: Image
+      type: string
+      jsonPath: .spec.image
+    - name: Port
+      type: integer
+      jsonPath: .spec.port
+    - name: Hostname
+      type: string
+      jsonPath: .spec.hostname
+    - name: Available
+      type: integer
+      jsonPath: .status.availableReplicas
+    - name: Build
+      type: string
+      jsonPath: .status.buildStatus
+  specProperties:
+    image:
+      type: string
+    repo:
+      type: string
+    tag:
+      type: string
+    imageTag:
+      type: string
+      description: "Rollback üçün əvvəlki SHA (məs. abc1234)"
+    dockerfile:
+      type: string
+    injectPipeline:
+      type: boolean
+      description: "When true, adds GitHub Actions build workflow to the repo. Requires GITHUB_TOKEN."
+    replicas:
+      type: integer
+      format: int32
+      minimum: 0
+      description: "Ignored when spec.hpa.minReplicas/maxReplicas are set."
+    hpa:
+      type: object
+      description: "HPA format."
+      properties:
+        minReplicas:
+          type: integer
+          format: int32
+          minimum: 1
+        maxReplicas:
+          type: integer
+          format: int32
+          minimum: 1
+    resources:
+      type: object
+      description: "Container resource requests/limits."
+      properties:
+        requests:
+          type: object
+          properties:
+            memory:
+              type: string
+            cpu:
+              type: string
+        limits:
+          type: object
+          properties:
+            memory:
+              type: string
+            cpu:
+              type: string
+    port:
+      type: integer
+      format: int32
+      minimum: 1
+      maximum: 65535
+    containerPort:
+      type: integer
+      format: int32
+      minimum: 1
+      maximum: 65535
+    hostname:
+      type: string
+    expose:
+      type: boolean
+      description: "If false, no HTTPRoute/DNS (internal only). Default true."
+    metrics:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        path:
+          type: string
+          description: "Metrics HTTP path, default /metrics"
+  statusProperties:
+    availableReplicas:
+      type: integer
+      format: int32
+    buildImage:
+      type: string
+    buildStatus:
+      type: string
+    buildTag:
+      type: string
+    lastRebuild:
+      type: string

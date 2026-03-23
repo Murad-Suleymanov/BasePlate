@@ -1,66 +1,63 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: easy-deploy-operator
+  name: {{ .Values.rbac.clusterRole.name }}
 rules:
-  - apiGroups: ["deploy.easydeploy.io"]
-    resources: ["birservices"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["deploy.easydeploy.io"]
-    resources: ["birservices/status"]
-    verbs: ["get", "update", "patch"]
-  - apiGroups: ["apps"]
-    resources: ["deployments"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["autoscaling"]
-    resources: ["horizontalpodautoscalers"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["services", "secrets"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["httproutes"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["monitoring.coreos.com"]
-    resources: ["servicemonitors"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+{{- range $key, $rule := .Values.rbac.clusterRole.rules }}
+{{- if $rule.enabled }}
+  - apiGroups: {{ $rule.apiGroups | toJson }}
+    resources: {{ $rule.resources | toJson }}
+    verbs: {{ $rule.verbs | toJson }}
+{{- end }}
+{{- end }}
+{{- range .Values.rbac.clusterRole.extraRules }}
+  - apiGroups: {{ .apiGroups | toJson }}
+    resources: {{ .resources | toJson }}
+    verbs: {{ .verbs | toJson }}
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: easy-deploy-operator
+  name: {{ .Values.rbac.clusterRoleBinding.name }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: easy-deploy-operator
+  name: {{ .Values.rbac.clusterRole.name }}
 subjects:
   - kind: ServiceAccount
-    name: easy-deploy-operator
+    name: {{ .Values.name }}
     namespace: {{ .Release.Namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: easy-deploy-read-argocd-repos
-  namespace: argocd
+  name: {{ .Values.rbac.argocdRole.name }}
+  namespace: {{ .Values.rbac.argocdRole.namespace }}
 rules:
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "list"]
+{{- range $key, $rule := .Values.rbac.argocdRole.rules }}
+{{- if $rule.enabled }}
+  - apiGroups: {{ $rule.apiGroups | toJson }}
+    resources: {{ $rule.resources | toJson }}
+    verbs: {{ $rule.verbs | toJson }}
+{{- end }}
+{{- end }}
+{{- range .Values.rbac.argocdRole.extraRules }}
+  - apiGroups: {{ .apiGroups | toJson }}
+    resources: {{ .resources | toJson }}
+    verbs: {{ .verbs | toJson }}
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: easy-deploy-read-argocd-repos
-  namespace: argocd
+  name: {{ .Values.rbac.argocdRoleBinding.name }}
+  namespace: {{ .Values.rbac.argocdRole.namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: easy-deploy-read-argocd-repos
+  name: {{ .Values.rbac.argocdRole.name }}
 subjects:
   - kind: ServiceAccount
-    name: easy-deploy-operator
+    name: {{ .Values.name }}
     namespace: {{ .Release.Namespace }}

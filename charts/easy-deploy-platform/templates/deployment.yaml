@@ -1,55 +1,94 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: easy-deploy-operator
+  name: {{ .Values.name }}
   namespace: {{ .Release.Namespace }}
   labels:
-    app.kubernetes.io/name: easy-deploy-operator
+    app.kubernetes.io/name: {{ .Values.name }}
 spec:
   replicas: {{ .Values.operator.replicas }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: easy-deploy-operator
+      app.kubernetes.io/name: {{ .Values.name }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: easy-deploy-operator
+        app.kubernetes.io/name: {{ .Values.name }}
     spec:
-      serviceAccountName: easy-deploy-operator
+      serviceAccountName: {{ .Values.name }}
       containers:
-        - name: manager
+        - name: {{ .Values.operator.containerName }}
           image: {{ .Values.operator.image }}
-          imagePullPolicy: Always
+          imagePullPolicy: {{ .Values.operator.imagePullPolicy }}
           args:
-            - "--metrics-bind-address=:8080"
-            - "--health-probe-bind-address=:8081"
+{{- if .Values.operator.args.metricsBindAddress.enabled }}
+            - {{ printf "--metrics-bind-address=%s" .Values.operator.args.metricsBindAddress.value | quote }}
+{{- end }}
+{{- if .Values.operator.args.healthProbeBindAddress.enabled }}
+            - {{ printf "--health-probe-bind-address=%s" .Values.operator.args.healthProbeBindAddress.value | quote }}
+{{- end }}
+{{- range .Values.operator.extraArgs }}
+            - {{ . | quote }}
+{{- end }}
           env:
+{{- if .Values.operator.env.environment.enabled }}
             - name: ENVIRONMENT
-              value: {{ .Values.environment | quote }}
+              value: {{ .Values.operator.env.environment.value | quote }}
+{{- end }}
+{{- if .Values.operator.env.baseDomain.enabled }}
             - name: BASE_DOMAIN
-              value: {{ .Values.baseDomain | quote }}
+              value: {{ .Values.operator.env.baseDomain.value | quote }}
+{{- end }}
+{{- if .Values.operator.env.targetIP.enabled }}
             - name: TARGET_IP
-              value: {{ .Values.targetIP | quote }}
+              value: {{ .Values.operator.env.targetIP.value | quote }}
+{{- end }}
+{{- if .Values.operator.env.registryURL.enabled }}
             - name: REGISTRY_URL
-              value: {{ .Values.registryURL | quote }}
+              value: {{ .Values.operator.env.registryURL.value | quote }}
+{{- end }}
+{{- if .Values.operator.env.webhookURL.enabled }}
             - name: WEBHOOK_URL
-              value: "https://{{ .Values.webhookHostname }}"
+              value: {{ .Values.operator.env.webhookURL.value | quote }}
+{{- end }}
+{{- range .Values.operator.extraEnv }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+{{- end }}
           envFrom:
+{{- if .Values.operator.envFrom.githubPipelineSecret.enabled }}
             - secretRef:
-                name: github-pipeline-secret
-                optional: true
+                name: {{ .Values.operator.envFrom.githubPipelineSecret.name }}
+                optional: {{ .Values.operator.envFrom.githubPipelineSecret.optional }}
+{{- end }}
+{{- range .Values.operator.extraEnvFrom }}
+            - {{ toYaml . | nindent 14 | trim }}
+{{- end }}
           ports:
+{{- if .Values.operator.ports.metrics.enabled }}
             - name: metrics
-              containerPort: 8080
+              containerPort: {{ .Values.operator.ports.metrics.containerPort }}
+{{- end }}
+{{- if .Values.operator.ports.health.enabled }}
             - name: health
-              containerPort: 8081
+              containerPort: {{ .Values.operator.ports.health.containerPort }}
+{{- end }}
+{{- if .Values.operator.ports.webhook.enabled }}
             - name: webhook
-              containerPort: 9090
+              containerPort: {{ .Values.operator.ports.webhook.containerPort }}
+{{- end }}
+{{- range .Values.operator.extraPorts }}
+            - {{ toYaml . | nindent 14 | trim }}
+{{- end }}
+{{- if .Values.operator.probes.liveness.enabled }}
           livenessProbe:
             httpGet:
-              path: /healthz
-              port: health
+              path: {{ .Values.operator.probes.liveness.path }}
+              port: {{ .Values.operator.probes.liveness.port }}
+{{- end }}
+{{- if .Values.operator.probes.readiness.enabled }}
           readinessProbe:
             httpGet:
-              path: /readyz
-              port: health
+              path: {{ .Values.operator.probes.readiness.path }}
+              port: {{ .Values.operator.probes.readiness.port }}
+{{- end }}
