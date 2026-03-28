@@ -69,6 +69,8 @@ func (r *BirServiceReconciler) reconcileEnvoyFilterRateLimit(ctx context.Context
 		return r.deleteEnvoyFilterIfExists(ctx, key)
 	}
 
+	l.Info("applying Istio EnvoyFilter for local rate limit", "name", name, "namespace", bs.Namespace)
+
 	rl := bs.Spec.Traffic.RateLimit.Local
 	rps := rl.RequestsPerSecond
 	var burst int32
