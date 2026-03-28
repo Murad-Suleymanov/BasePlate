@@ -99,7 +99,7 @@ replicas: 1                  # Number of pod replicas
 hostname: ""                 # Custom hostname (default: <name>-<namespace>.easysolution.work)
 
 # Mesh (Istio): `traffic` + provider boş/istio => operator namespace-ə istio-injection=enabled qoyur.
-# Əvvəlcə mesh olmadan deploy olunubsa, mövcud Deployment üçün avtomatik rollout restart (sidecar üçün).
+# Sidecar üçün: namespace label ilk dəfə enabled olanda və ya pod-larda istio-proxy yoxdursa (chart əvvəlcədən label verəndə də) avtomatik rollout.
 traffic:
   provider: istio            # optional; empty = istio
   rateLimit:

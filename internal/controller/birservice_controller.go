@@ -214,7 +214,11 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
-	if labelJustEnabled && deploymentExisted {
+	meshNeedRollout, err := r.meshNeedsRolloutForSidecar(ctx, bs)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if (labelJustEnabled && deploymentExisted) || meshNeedRollout {
 		if err := r.rolloutRestartWorkload(ctx, bs); err != nil {
 			return ctrl.Result{}, err
 		}
