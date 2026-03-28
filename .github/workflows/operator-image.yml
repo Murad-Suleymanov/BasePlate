@@ -15,6 +15,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # secrets konteksti step if:-də istifadə oluna bilmir; PAT şərti üçün env
+    env:
+      BASEPLATE_INFRA_TOKEN: ${{ secrets.BASEPLATE_INFRA_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -73,16 +76,16 @@ jobs:
 
       # ArgoCD bu fayllardan oxuyur — token: repo Settings → Secrets → BASEPLATE_INFRA_TOKEN (PAT: BasePlate-Infra contents:write)
       - name: Checkout BasePlate-Infra
-        if: ${{ secrets.BASEPLATE_INFRA_TOKEN != '' }}
+        if: ${{ env.BASEPLATE_INFRA_TOKEN != '' }}
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository_owner }}/BasePlate-Infra
           path: infra
-          token: ${{ secrets.BASEPLATE_INFRA_TOKEN }}
+          token: ${{ env.BASEPLATE_INFRA_TOKEN }}
           fetch-depth: 0
 
       - name: Bump operator image in Infra (dev + prod)
-        if: ${{ secrets.BASEPLATE_INFRA_TOKEN != '' }}
+        if: ${{ env.BASEPLATE_INFRA_TOKEN != '' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -94,7 +97,7 @@ jobs:
           done
 
       - name: Commit and push BasePlate-Infra
-        if: ${{ secrets.BASEPLATE_INFRA_TOKEN != '' }}
+        if: ${{ env.BASEPLATE_INFRA_TOKEN != '' }}
         shell: bash
         run: |
           set -euo pipefail
