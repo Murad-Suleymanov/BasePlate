@@ -146,12 +146,10 @@ func buildEnvoyFilterSpec(bs *deployv1alpha1.BirService, tokensPerFill, maxToken
 							"@type": "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
 							"stat_prefix": statPrefix,
 							"token_bucket": map[string]interface{}{
-								// unstructured JSON dərin kopiyası int32 qəbul etmir — int64 istifadə et
+								// unstructured: int32 yox int64; Duration isə JSON-da "1s" string (obyekt yox)
 								"max_tokens":      int64(maxTokens),
 								"tokens_per_fill": int64(tokensPerFill),
-								"fill_interval": map[string]interface{}{
-									"seconds": int64(1),
-								},
+								"fill_interval":   "1s",
 							},
 							"filter_enabled": map[string]interface{}{
 								"runtime_key": "local_rate_limit_enabled",
