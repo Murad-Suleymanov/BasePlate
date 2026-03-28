@@ -146,8 +146,9 @@ func buildEnvoyFilterSpec(bs *deployv1alpha1.BirService, tokensPerFill, maxToken
 							"@type": "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
 							"stat_prefix": statPrefix,
 							"token_bucket": map[string]interface{}{
-								"max_tokens":     maxTokens,
-								"tokens_per_fill": tokensPerFill,
+								// unstructured JSON dərin kopiyası int32 qəbul etmir — int64 istifadə et
+								"max_tokens":      int64(maxTokens),
+								"tokens_per_fill": int64(tokensPerFill),
 								"fill_interval": map[string]interface{}{
 									"seconds": int64(1),
 								},
@@ -155,14 +156,14 @@ func buildEnvoyFilterSpec(bs *deployv1alpha1.BirService, tokensPerFill, maxToken
 							"filter_enabled": map[string]interface{}{
 								"runtime_key": "local_rate_limit_enabled",
 								"default_value": map[string]interface{}{
-									"numerator":   100,
+									"numerator":   int64(100),
 									"denominator": "HUNDRED",
 								},
 							},
 							"filter_enforced": map[string]interface{}{
 								"runtime_key": "local_rate_limit_enforced",
 								"default_value": map[string]interface{}{
-									"numerator":   100,
+									"numerator":   int64(100),
 									"denominator": "HUNDRED",
 								},
 							},
