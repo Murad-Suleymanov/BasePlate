@@ -47,8 +47,9 @@ jobs:
           tags: |
             ghcr.io/${{ env.OWNER_LC }}/easy-deploy-operator:main
             ghcr.io/${{ env.OWNER_LC }}/easy-deploy-operator:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Registry cache (ghcr) — GHA cache API bəzən "connection reset" verir (results-receiver.actions.githubusercontent.com)
+          cache-from: type=registry,ref=ghcr.io/${{ env.OWNER_LC }}/easy-deploy-operator:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ env.OWNER_LC }}/easy-deploy-operator:buildcache,mode=max
 
       # Chart default image (BasePlate). ArgoCD hələ də BasePlate-Infra-dakı
       # dev/platform/values/easy-deploy-platform-values.yaml və
