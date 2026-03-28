@@ -98,15 +98,16 @@ containerPort: 0             # Container port if different from service port
 replicas: 1                  # Number of pod replicas
 hostname: ""                 # Custom hostname (default: <name>-<namespace>.easysolution.work)
 
-# Istio: local rate limit per pod (operator creates EnvoyFilter). Namespace must have
-# Istio sidecar injection; mesh must be installed (see BasePlate-Infra istio-config).
+# Mesh (Istio): `traffic` + provider boş/istio => operator namespace-ə istio-injection=enabled qoyur.
+# Əvvəlcə mesh olmadan deploy olunubsa, mövcud Deployment üçün avtomatik rollout restart (sidecar üçün).
 traffic:
+  provider: istio            # optional; empty = istio
   rateLimit:
     enabled: true
-    mode: local              # only "local" is implemented (Envoy token bucket)
+    mode: local
     local:
       requestsPerSecond: 100
-      burst: 20              # optional; max_tokens = requestsPerSecond + burst
+      burst: 20
 ```
 
 ### Auto-detection
@@ -143,7 +144,8 @@ BasePlate/                              # Platform repo (this repo)
 ├── internal/
 │   ├── controller/                     # Reconciliation logic
 │   │   ├── birservice_controller.go    #   Deployment, Service, HTTPRoute, Kaniko
-│   │   └── envoyfilter_ratelimit.go    #   Istio EnvoyFilter (local rate limit)
+│   │   ├── envoyfilter_ratelimit.go    #   Istio EnvoyFilter (local rate limit)
+│   │   └── namespace_istio.go          #   Namespace istio-injection label
 │   ├── registry/                       # Registry v2 API client
 │   │   └── inspect.go                  #   Port auto-detection from image config
 │   └── webhook/                        # GitHub webhook handler

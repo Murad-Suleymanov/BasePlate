@@ -59,13 +59,20 @@ type BirServiceSpec struct {
 	// Defaults when omitted: requests(cpu=75m,memory=200Mi), limits are 2x requests.
 	Resources *ResourceConfigSpec `json:"resources,omitempty"`
 
-	// Traffic configures mesh-level traffic policies (Istio). When rate limiting is enabled
-	// with mode=local, the operator creates an EnvoyFilter with local rate limiting on the workload.
+	// Traffic configures service-mesh traffic policies. If non-nil, the operator treats the
+	// workload as mesh-enabled (default provider: Istio): namespace istio-injection label, and
+	// optional Envoy local rate limit. Omit entirely if the app should not use the mesh.
 	Traffic *TrafficSpec `json:"traffic,omitempty"`
 }
 
-// TrafficSpec groups optional traffic management for the workload.
+// TrafficSpec groups mesh traffic settings. Presence of spec.traffic means mesh intent;
+// use provider to select the mesh (only "istio" today).
 type TrafficSpec struct {
+	// Provider is the mesh implementation. Empty or "istio" uses Istio (Envoy sidecar, EnvoyFilter).
+	// Sidecar injection is always enabled for Istio (namespace label istio-injection=enabled).
+	// Other values are reserved; the operator skips Istio resources if set to a non-istio value.
+	Provider string `json:"provider,omitempty"`
+
 	// RateLimit configures request rate limiting (Envoy local rate limit for mode=local).
 	RateLimit *RateLimitSpec `json:"rateLimit,omitempty"`
 }

@@ -89,6 +89,16 @@ func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 }
 
 func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl.Request, bs *deployv1alpha1.BirService, image string) (ctrl.Result, error) {
+	depName := fmt.Sprintf("%s-deploy", bs.Name)
+	depKey := types.NamespacedName{Name: depName, Namespace: bs.Namespace}
+	var preExist appsv1.Deployment
+	deploymentExisted := r.Get(ctx, depKey, &preExist) == nil
+
+	labelJustEnabled, err := r.reconcileNamespaceIstioInjection(ctx, bs)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	minReplicas, maxReplicas, useHPA := resolveHPAConfig(bs)
 	var replicas *int32
 	if !useHPA {
@@ -118,9 +128,6 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		"app.kubernetes.io/managed-by": "easy-deploy-operator",
 		"deploy.easydeploy.io/tenant":  bs.Namespace,
 	}
-
-	depName := fmt.Sprintf("%s-deploy", bs.Name)
-	depKey := types.NamespacedName{Name: depName, Namespace: bs.Namespace}
 
 	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		dep := appsv1.Deployment{}
@@ -205,6 +212,12 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 
 	if err := r.reconcileEnvoyFilterRateLimit(ctx, bs); err != nil {
 		return ctrl.Result{}, err
+	}
+
+	if labelJustEnabled && deploymentExisted {
+		if err := r.rolloutRestartWorkload(ctx, bs); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	var dep appsv1.Deployment
@@ -362,6 +375,11 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 			Spec: batchv1.JobSpec{
 				BackoffLimit: int32Ptr(2),
 				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							"sidecar.istio.io/inject": "false",
+						},
+					},
 					Spec: corev1.PodSpec{
 						RestartPolicy: corev1.RestartPolicyNever,
 						Containers: []corev1.Container{

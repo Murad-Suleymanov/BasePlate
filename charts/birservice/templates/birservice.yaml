@@ -86,19 +86,8 @@ spec:
     path: "/metrics"
 {{- end }}
 {{- end }}
-{{- with .Values.traffic }}
-{{- with .rateLimit }}
-{{- if and .enabled .local }}
+{{- if .Values.traffic }}
   traffic:
-    rateLimit:
-      enabled: true
-      mode: {{ default "local" .mode | quote }}
-      local:
-        requestsPerSecond: {{ .local.requestsPerSecond }}
-{{- if .local.burst }}
-        burst: {{ .local.burst }}
-{{- end }}
-{{- end }}
-{{- end }}
+{{ toYaml .Values.traffic | nindent 4 }}
 {{- end }}
 

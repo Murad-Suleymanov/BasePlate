@@ -127,6 +127,11 @@ rbac:
         apiGroups: ["networking.istio.io"]
         resources: ["envoyfilters"]
         verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      namespaces:
+        enabled: true
+        apiGroups: [""]
+        resources: ["namespaces"]
+        verbs: ["get", "list", "watch", "update", "patch"]
     extraRules: []
   clusterRoleBinding:
     name: easy-deploy-operator
@@ -248,8 +253,10 @@ crd:
           description: "Metrics HTTP path, default /metrics"
     traffic:
       type: object
-      description: "Mesh traffic policies (Istio). rateLimit.enabled with mode local creates EnvoyFilter."
+      description: "Mesh traffic; presence implies mesh. provider istio (default). rateLimit local creates EnvoyFilter."
       properties:
+        provider:
+          type: string
         rateLimit:
           type: object
           properties:

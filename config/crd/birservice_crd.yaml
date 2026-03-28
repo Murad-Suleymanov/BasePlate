@@ -123,8 +123,11 @@ spec:
                       description: Metrics HTTP path, default /metrics
                 traffic:
                   type: object
-                  description: Mesh traffic policies (Istio). Local rate limit creates EnvoyFilter.
+                  description: Service mesh traffic (presence implies mesh intent). Local rate limit creates EnvoyFilter.
                   properties:
+                    provider:
+                      type: string
+                      description: Mesh implementation; empty or istio — sidecar injection always on.
                     rateLimit:
                       type: object
                       properties:

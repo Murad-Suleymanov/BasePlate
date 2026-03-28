@@ -31,13 +31,15 @@ expose: true
 # Metrics: default true - hər komponent metrik yığır. false = söndür. Or { enabled: true, path: /actuator/prometheus }
 metrics: true
 
-# Istio: Envoy local rate limit (operator EnvoyFilter yaradır). Namespace-də istio-injection olmalıdır.
+# Mesh (Istio): traffic + provider boş/istio — injection məcburi (istio-injection=enabled).
+# Mesh istəmirsənsə traffic yazma.
 # traffic: {}
 # traffic:
+#   provider: istio
 #   rateLimit:
 #     enabled: true
 #     mode: local
 #     local:
 #       requestsPerSecond: 100
 #       burst: 20
-traffic: {}
+# traffic: yazılmasa mesh idarəsi yoxdur; minimal mesh üçün: traffic: {}
