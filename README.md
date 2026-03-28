@@ -97,6 +97,16 @@ port: 0                      # Service port (auto-detected from image, fallback:
 containerPort: 0             # Container port if different from service port
 replicas: 1                  # Number of pod replicas
 hostname: ""                 # Custom hostname (default: <name>-<namespace>.easysolution.work)
+
+# Istio: local rate limit per pod (operator creates EnvoyFilter). Namespace must have
+# Istio sidecar injection; mesh must be installed (see BasePlate-Infra istio-config).
+traffic:
+  rateLimit:
+    enabled: true
+    mode: local              # only "local" is implemented (Envoy token bucket)
+    local:
+      requestsPerSecond: 100
+      burst: 20              # optional; max_tokens = requestsPerSecond + burst
 ```
 
 ### Auto-detection
@@ -132,7 +142,8 @@ BasePlate/                              # Platform repo (this repo)
 │   └── easydeployctl/main.go           # CLI tool (YAML → BirService converter)
 ├── internal/
 │   ├── controller/                     # Reconciliation logic
-│   │   └── birservice_controller.go    #   Deployment, Service, HTTPRoute, Kaniko
+│   │   ├── birservice_controller.go    #   Deployment, Service, HTTPRoute, Kaniko
+│   │   └── envoyfilter_ratelimit.go    #   Istio EnvoyFilter (local rate limit)
 │   ├── registry/                       # Registry v2 API client
 │   │   └── inspect.go                  #   Port auto-detection from image config
 │   └── webhook/                        # GitHub webhook handler

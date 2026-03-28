@@ -58,6 +58,35 @@ type BirServiceSpec struct {
 	// Resources configures container requests/limits.
 	// Defaults when omitted: requests(cpu=75m,memory=200Mi), limits are 2x requests.
 	Resources *ResourceConfigSpec `json:"resources,omitempty"`
+
+	// Traffic configures mesh-level traffic policies (Istio). When rate limiting is enabled
+	// with mode=local, the operator creates an EnvoyFilter with local rate limiting on the workload.
+	Traffic *TrafficSpec `json:"traffic,omitempty"`
+}
+
+// TrafficSpec groups optional traffic management for the workload.
+type TrafficSpec struct {
+	// RateLimit configures request rate limiting (Envoy local rate limit for mode=local).
+	RateLimit *RateLimitSpec `json:"rateLimit,omitempty"`
+}
+
+// RateLimitSpec configures rate limiting for the BirService workload.
+type RateLimitSpec struct {
+	// Enabled turns on Istio Envoy local rate limiting for this workload.
+	Enabled bool `json:"enabled"`
+	// Mode is "local" (Envoy sidecar token bucket) or "global" (not implemented yet).
+	Mode string `json:"mode,omitempty"`
+	// Local configures per-pod rate limit (Envoy http local rate limit filter).
+	Local *LocalRateLimitSpec `json:"local,omitempty"`
+}
+
+// LocalRateLimitSpec configures Envoy local rate limiting (inbound).
+type LocalRateLimitSpec struct {
+	// RequestsPerSecond is the steady-state requests allowed per second per pod.
+	RequestsPerSecond int32 `json:"requestsPerSecond"`
+	// Burst is extra tokens added to the bucket capacity (max_tokens = requestsPerSecond + burst).
+	// +optional
+	Burst *int32 `json:"burst,omitempty"`
 }
 
 type HPASpec struct {

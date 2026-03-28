@@ -203,6 +203,10 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
+	if err := r.reconcileEnvoyFilterRateLimit(ctx, bs); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	var dep appsv1.Deployment
 	if err := r.Get(ctx, depKey, &dep); err != nil {
 		return ctrl.Result{}, err

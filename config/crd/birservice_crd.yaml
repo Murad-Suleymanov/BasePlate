@@ -121,6 +121,30 @@ spec:
                     path:
                       type: string
                       description: Metrics HTTP path, default /metrics
+                traffic:
+                  type: object
+                  description: Mesh traffic policies (Istio). Local rate limit creates EnvoyFilter.
+                  properties:
+                    rateLimit:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                        mode:
+                          type: string
+                          description: "local (Envoy sidecar) or global (not implemented)"
+                        local:
+                          type: object
+                          properties:
+                            requestsPerSecond:
+                              type: integer
+                              format: int32
+                              minimum: 1
+                            burst:
+                              type: integer
+                              format: int32
+                              minimum: 0
+                              description: Extra burst capacity added to token bucket max_tokens.
             status:
               type: object
               properties:

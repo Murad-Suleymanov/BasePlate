@@ -86,4 +86,19 @@ spec:
     path: "/metrics"
 {{- end }}
 {{- end }}
+{{- with .Values.traffic }}
+{{- with .rateLimit }}
+{{- if and .enabled .local }}
+  traffic:
+    rateLimit:
+      enabled: true
+      mode: {{ default "local" .mode | quote }}
+      local:
+        requestsPerSecond: {{ .local.requestsPerSecond }}
+{{- if .local.burst }}
+        burst: {{ .local.burst }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
 

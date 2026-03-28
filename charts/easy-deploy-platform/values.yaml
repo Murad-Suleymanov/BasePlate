@@ -122,6 +122,11 @@ rbac:
         apiGroups: ["monitoring.coreos.com"]
         resources: ["servicemonitors"]
         verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      envoyfilters:
+        enabled: true
+        apiGroups: ["networking.istio.io"]
+        resources: ["envoyfilters"]
+        verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
     extraRules: []
   clusterRoleBinding:
     name: easy-deploy-operator
@@ -241,6 +246,28 @@ crd:
         path:
           type: string
           description: "Metrics HTTP path, default /metrics"
+    traffic:
+      type: object
+      description: "Mesh traffic policies (Istio). rateLimit.enabled with mode local creates EnvoyFilter."
+      properties:
+        rateLimit:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            mode:
+              type: string
+            local:
+              type: object
+              properties:
+                requestsPerSecond:
+                  type: integer
+                  format: int32
+                  minimum: 1
+                burst:
+                  type: integer
+                  format: int32
+                  minimum: 0
   statusProperties:
     availableReplicas:
       type: integer

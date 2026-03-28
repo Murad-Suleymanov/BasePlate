@@ -48,6 +48,65 @@ func (in *BirServiceSpec) DeepCopyInto(out *BirServiceSpec) {
 		*out = new(bool)
 		**out = **in
 	}
+	if in.Traffic != nil {
+		in, out := &in.Traffic, &out.Traffic
+		*out = new(TrafficSpec)
+		(*in).DeepCopyInto(*out)
+	}
+}
+
+func (in *TrafficSpec) DeepCopyInto(out *TrafficSpec) {
+	*out = *in
+	if in.RateLimit != nil {
+		in, out := &in.RateLimit, &out.RateLimit
+		*out = new(RateLimitSpec)
+		(*in).DeepCopyInto(*out)
+	}
+}
+
+func (in *TrafficSpec) DeepCopy() *TrafficSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(TrafficSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *RateLimitSpec) DeepCopyInto(out *RateLimitSpec) {
+	*out = *in
+	if in.Local != nil {
+		in, out := &in.Local, &out.Local
+		*out = new(LocalRateLimitSpec)
+		(*in).DeepCopyInto(*out)
+	}
+}
+
+func (in *RateLimitSpec) DeepCopy() *RateLimitSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(RateLimitSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *LocalRateLimitSpec) DeepCopyInto(out *LocalRateLimitSpec) {
+	*out = *in
+	if in.Burst != nil {
+		in, out := &in.Burst, &out.Burst
+		*out = new(int32)
+		**out = **in
+	}
+}
+
+func (in *LocalRateLimitSpec) DeepCopy() *LocalRateLimitSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(LocalRateLimitSpec)
+	in.DeepCopyInto(out)
+	return out
 }
 
 func (in *MetricsSpec) DeepCopyInto(out *MetricsSpec) {

@@ -4,8 +4,8 @@ on:
   push:
     branches: ["main"]
     paths-ignore:
-      - "dev/operator/deployment.yaml"
-      - "prod/operator/deployment.yaml"
+      # Bot bump-u yenidən build etməsin deyə
+      - "charts/easy-deploy-platform/values.yaml"
   workflow_dispatch: {}
 
 permissions:
@@ -50,23 +50,25 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Update operator manifests with immutable tag
+      # Chart default image (BasePlate). ArgoCD hələ də BasePlate-Infra-dakı
+      # dev/platform/values/easy-deploy-platform-values.yaml və
+      # prod/platform/values/easy-deploy-platform-values.yaml ilə override edə bilər — ora əl ilə və ya ayrı workflow ilə sync et.
+      - name: Bump operator image in chart values
         shell: bash
         run: |
           set -euo pipefail
           NEW_IMAGE="ghcr.io/${OWNER_LC}/easy-deploy-operator:${GITHUB_SHA}"
-          sed -i -E "s|image: ghcr.io/.*/easy-deploy-operator:.*$|image: ${NEW_IMAGE}|g" dev/operator/deployment.yaml
-          sed -i -E "s|image: ghcr.io/.*/easy-deploy-operator:.*$|image: ${NEW_IMAGE}|g" prod/operator/deployment.yaml
+          sed -i -E "s|image:[[:space:]]*ghcr.io/.*/easy-deploy-operator:.*$|image: ${NEW_IMAGE}|g" charts/easy-deploy-platform/values.yaml
 
-      - name: Commit manifest update
+      - name: Commit chart values update
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- dev/operator/deployment.yaml prod/operator/deployment.yaml; then
+          if git diff --quiet -- charts/easy-deploy-platform/values.yaml; then
             echo "No manifest changes detected"
             exit 0
           fi
-          git add dev/operator/deployment.yaml prod/operator/deployment.yaml
+          git add charts/easy-deploy-platform/values.yaml
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -m "chore(operator): bump image to ${GITHUB_SHA}"
           git push
