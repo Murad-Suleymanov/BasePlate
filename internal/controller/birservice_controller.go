@@ -89,6 +89,29 @@ func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 }
 
 func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl.Request, bs *deployv1alpha1.BirService, image string) (ctrl.Result, error) {
+	// Sync StableTag:
+	// - Canary just enabled and StableTag not yet set → lock current BuildTag as stable.
+	// - Canary disabled and StableTag is set → promote: clear StableTag (BuildTag is now stable).
+	if bs.Spec.Canary != nil && bs.Spec.Canary.Enabled {
+		if bs.Status.StableTag == "" && bs.Status.BuildTag != "" {
+			if err := r.updateStableTag(ctx, req, bs, bs.Status.BuildTag); err != nil {
+				return ctrl.Result{}, err
+			}
+			bs.Status.StableTag = bs.Status.BuildTag
+		}
+	} else if bs.Status.StableTag != "" {
+		if err := r.updateStableTag(ctx, req, bs, ""); err != nil {
+			return ctrl.Result{}, err
+		}
+		bs.Status.StableTag = ""
+	}
+
+	// When canary is active, stable deployment must stay on the locked StableTag,
+	// not on the latest build image that the pipeline just pushed.
+	if bs.Spec.Canary != nil && bs.Spec.Canary.Enabled && bs.Status.StableTag != "" {
+		image = fmt.Sprintf("%s/%s:%s", r.effectiveRegistryURL(), bs.Name, bs.Status.StableTag)
+	}
+
 	depName := fmt.Sprintf("%s-deploy", bs.Name)
 	depKey := types.NamespacedName{Name: depName, Namespace: bs.Namespace}
 	var preExist appsv1.Deployment
@@ -202,7 +225,12 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
-	if err := r.reconcileHTTPRoute(ctx, bs, svcName, port); err != nil {
+	cSvcName, cWeight, err := r.reconcileCanary(ctx, bs, image, port)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.reconcileHTTPRoute(ctx, bs, svcName, port, cSvcName, cWeight); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -556,6 +584,17 @@ func (r *BirServiceReconciler) deleteOldBuildJobs(ctx context.Context, bs *deplo
 	return nil
 }
 
+func (r *BirServiceReconciler) updateStableTag(ctx context.Context, req ctrl.Request, bs *deployv1alpha1.BirService, tag string) error {
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var latest deployv1alpha1.BirService
+		if err := r.Get(ctx, req.NamespacedName, &latest); err != nil {
+			return err
+		}
+		latest.Status.StableTag = tag
+		return r.Status().Update(ctx, &latest)
+	})
+}
+
 func (r *BirServiceReconciler) updateBuildStatus(ctx context.Context, req ctrl.Request, bs *deployv1alpha1.BirService, image, status, tag string) (ctrl.Result, error) {
 	buildStatusTotal.WithLabelValues(strings.ToLower(status)).Inc()
 	return ctrl.Result{}, retry.RetryOnConflict(retry.DefaultBackoff, func() error {
@@ -771,7 +810,7 @@ func (r *BirServiceReconciler) reconcileHPA(ctx context.Context, bs *deployv1alp
 	return err
 }
 
-func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deployv1alpha1.BirService, svcName string, svcPort int32) error {
+func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deployv1alpha1.BirService, svcName string, svcPort int32, canaySvcName string, canaryWeight int32) error {
 	routeName := fmt.Sprintf("%s-route", bs.Name)
 	hostname := r.resolveHostname(bs)
 
@@ -792,6 +831,33 @@ func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deplo
 		route.SetNamespace(bs.Namespace)
 
 		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, route, func() error {
+			var backendRefs []interface{}
+			if canaySvcName != "" && canaryWeight > 0 {
+				stableWeight := int64(100 - canaryWeight)
+				if stableWeight < 0 {
+					stableWeight = 0
+				}
+				backendRefs = []interface{}{
+					map[string]interface{}{
+						"name":   svcName,
+						"port":   int64(svcPort),
+						"weight": stableWeight,
+					},
+					map[string]interface{}{
+						"name":   canaySvcName,
+						"port":   int64(svcPort),
+						"weight": int64(canaryWeight),
+					},
+				}
+			} else {
+				backendRefs = []interface{}{
+					map[string]interface{}{
+						"name": svcName,
+						"port": int64(svcPort),
+					},
+				}
+			}
+
 			route.Object["spec"] = map[string]interface{}{
 				"parentRefs": []interface{}{
 					map[string]interface{}{
@@ -808,12 +874,7 @@ func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deplo
 				"hostnames": []interface{}{hostname},
 				"rules": []interface{}{
 					map[string]interface{}{
-						"backendRefs": []interface{}{
-							map[string]interface{}{
-								"name": svcName,
-								"port": int64(svcPort),
-							},
-						},
+						"backendRefs": backendRefs,
 					},
 				},
 			}

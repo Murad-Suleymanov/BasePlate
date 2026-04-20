@@ -63,6 +63,10 @@ type BirServiceSpec struct {
 	// workload as mesh-enabled (default provider: Istio): namespace istio-injection label, and
 	// optional Envoy local rate limit. Omit entirely if the app should not use the mesh.
 	Traffic *TrafficSpec `json:"traffic,omitempty"`
+
+	// Canary enables a parallel canary deployment with weighted HTTPRoute traffic splitting.
+	// Set enabled: false or remove this field to tear down the canary infra.
+	Canary *CanarySpec `json:"canary,omitempty"`
 }
 
 // TrafficSpec groups mesh traffic settings. Presence of spec.traffic means mesh intent;
@@ -111,6 +115,18 @@ type ResourceValues struct {
 	CPU    string `json:"cpu,omitempty"`
 }
 
+// CanarySpec configures a parallel canary deployment with weighted HTTPRoute traffic splitting.
+type CanarySpec struct {
+	// Enabled activates the canary deployment. Set false or remove to tear down canary infra.
+	Enabled bool `json:"enabled"`
+	// Weight is the percentage of traffic routed to canary (0-100). Default 10.
+	Weight *int32 `json:"weight,omitempty"`
+	// Image is the fully-qualified canary container image. If empty, derived from spec.image/repo + Tag.
+	Image string `json:"image,omitempty"`
+	// Tag overrides the image tag for the canary deployment (e.g. "v2.0.0-rc1").
+	Tag string `json:"tag,omitempty"`
+}
+
 // MetricsSpec configures Prometheus scraping for custom application metrics.
 type MetricsSpec struct {
 	// Enabled turns on ServiceMonitor creation. Default path /metrics.
@@ -126,6 +142,11 @@ type BirServiceStatus struct {
 	BuildStatus       string `json:"buildStatus,omitempty"`
 	BuildTag          string `json:"buildTag,omitempty"`
 	LastRebuild       string `json:"lastRebuild,omitempty"`
+	// StableTag is the image tag locked in as stable when canary was first enabled.
+	// Cleared on promotion (canary.enabled → false).
+	StableTag   string `json:"stableTag,omitempty"`
+	// CanaryImage is the full image URL of the active canary deployment (display only).
+	CanaryImage string `json:"canaryImage,omitempty"`
 }
 
 // +kubebuilder:object:root=true

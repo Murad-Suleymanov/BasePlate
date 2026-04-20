@@ -36,6 +36,9 @@ spec:
         - name: Build
           type: string
           jsonPath: .status.buildStatus
+        - name: Canary
+          type: integer
+          jsonPath: .spec.canary.weight
       schema:
         openAPIV3Schema:
           type: object
@@ -121,6 +124,24 @@ spec:
                     path:
                       type: string
                       description: Metrics HTTP path, default /metrics
+                canary:
+                  type: object
+                  description: Canary deployment with weighted HTTPRoute traffic splitting. Remove or set enabled=false to tear down.
+                  properties:
+                    enabled:
+                      type: boolean
+                    weight:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      maximum: 100
+                      description: Percentage of traffic routed to canary (0-100). Default 10.
+                    image:
+                      type: string
+                      description: Fully-qualified canary image. If empty, derived from spec.image + tag.
+                    tag:
+                      type: string
+                      description: Image tag override for canary (e.g. v2.0.0-rc1).
                 traffic:
                   type: object
                   description: Service mesh traffic (presence implies mesh intent). Local rate limit creates EnvoyFilter.
@@ -162,4 +183,10 @@ spec:
                   type: string
                 lastRebuild:
                   type: string
+                stableTag:
+                  type: string
+                  description: Image tag locked as stable when canary was enabled. Cleared on promotion.
+                canaryImage:
+                  type: string
+                  description: Full image URL of the active canary deployment.
 
