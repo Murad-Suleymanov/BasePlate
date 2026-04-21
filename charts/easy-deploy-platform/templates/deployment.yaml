@@ -17,6 +17,12 @@ spec:
     spec:
       terminationGracePeriodSeconds: {{ .Values.operator.terminationGracePeriodSeconds | default 30 }}
       serviceAccountName: {{ .Values.name }}
+      {{- if .Values.operator.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.operator.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
       containers:
         - name: {{ .Values.operator.containerName }}
           image: {{ .Values.operator.image }}
