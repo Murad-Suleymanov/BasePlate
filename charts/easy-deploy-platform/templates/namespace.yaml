@@ -2,8 +2,9 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: {{ .Release.Namespace }}
-  {{- if .Values.istio.enabled }}
   labels:
+    istio-injection: disabled
+  {{- if .Values.istio.enabled }}
     istio.io/dataplane-mode: ambient
     istio.io/use-waypoint: waypoint
   {{- end }}
