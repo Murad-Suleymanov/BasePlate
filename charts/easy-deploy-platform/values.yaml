@@ -1,5 +1,8 @@
 name: easy-deploy-operator
 
+istio:
+  enabled: false
+
 operator:
   containerName: manager
   image: ghcr.io/murad-suleymanov/easy-deploy-operator:8b77f73c16e3c56ef62e6ed96609c65cf5f17453
