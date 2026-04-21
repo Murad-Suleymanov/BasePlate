@@ -187,7 +187,7 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 					},
 					Resources: resourceReqs,
 					Lifecycle: &corev1.Lifecycle{
-						PreStop: &corev1.LifecycleHandler{
+						PreStop: &corev1.Handler{
 							Exec: &corev1.ExecAction{
 								Command: []string{"/bin/sh", "-c", "sleep 5"},
 							},
