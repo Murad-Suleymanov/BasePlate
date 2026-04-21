@@ -19,8 +19,12 @@ import (
 )
 
 const (
-	labelIstioInjection = "istio-injection"
-	istioInjectEnabled  = "enabled"
+	labelIstioInjection    = "istio-injection"
+	istioInjectDisabled    = "disabled"
+	labelDataplaneMode     = "istio.io/dataplane-mode"
+	labelUseWaypoint       = "istio.io/use-waypoint"
+	dataplaneAmbient       = "ambient"
+	waypointName           = "waypoint"
 )
 
 const (
@@ -54,11 +58,13 @@ func (r *BirServiceReconciler) reconcileNamespaceIstioInjection(ctx context.Cont
 		if ns.Labels == nil {
 			ns.Labels = map[string]string{}
 		}
-		if ns.Labels[labelIstioInjection] == istioInjectEnabled {
+		if ns.Labels[labelDataplaneMode] == dataplaneAmbient {
 			return nil
 		}
 		labelJustEnabled = true
-		ns.Labels[labelIstioInjection] = istioInjectEnabled
+		ns.Labels[labelIstioInjection] = istioInjectDisabled
+		ns.Labels[labelDataplaneMode] = dataplaneAmbient
+		ns.Labels[labelUseWaypoint] = waypointName
 		return r.Update(ctx, &ns)
 	})
 	return labelJustEnabled, err
@@ -78,7 +84,7 @@ func (r *BirServiceReconciler) meshNeedsRolloutForSidecar(ctx context.Context, b
 	if err := r.Get(ctx, types.NamespacedName{Name: bs.Namespace}, &ns); err != nil {
 		return false, err
 	}
-	if ns.Labels[labelIstioInjection] != istioInjectEnabled {
+	if ns.Labels[labelDataplaneMode] != dataplaneAmbient {
 		return false, nil
 	}
 	depName := fmt.Sprintf("%s-deploy", bs.Name)
@@ -98,21 +104,9 @@ func (r *BirServiceReconciler) meshNeedsRolloutForSidecar(ctx context.Context, b
 	if err := r.List(ctx, podList, client.InNamespace(bs.Namespace), client.MatchingLabels{"app.kubernetes.io/name": bs.Name}); err != nil {
 		return false, err
 	}
-	for _, p := range podList.Items {
-		if p.Status.Phase != corev1.PodRunning {
-			continue
-		}
-		hasProxy := false
-		for _, c := range p.Spec.Containers {
-			if c.Name == "istio-proxy" {
-				hasProxy = true
-				break
-			}
-		}
-		if !hasProxy {
-			return true, nil
-		}
-	}
+	// ambient mode-da sidecar yoxdur, ztunnel node-da işləyir
+	// pod-ların restart-a ehtiyacı yoxdur
+	_ = podList
 	return false, nil
 }
 
