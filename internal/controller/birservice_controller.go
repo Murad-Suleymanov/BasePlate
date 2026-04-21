@@ -175,6 +175,8 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 				}
 			}
 
+			gracePeriod := int64(30)
+			templateSpec.TerminationGracePeriodSeconds = &gracePeriod
 			templateSpec.Containers = []corev1.Container{
 				{
 					Name:            "app",
@@ -184,6 +186,13 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 						{ContainerPort: containerPort},
 					},
 					Resources: resourceReqs,
+					Lifecycle: &corev1.Lifecycle{
+						PreStop: &corev1.LifecycleHandler{
+							Exec: &corev1.ExecAction{
+								Command: []string{"/bin/sh", "-c", "sleep 5"},
+							},
+						},
+					},
 				},
 			}
 

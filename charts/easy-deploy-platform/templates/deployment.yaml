@@ -15,6 +15,7 @@ spec:
       labels:
         app.kubernetes.io/name: {{ .Values.name }}
     spec:
+      terminationGracePeriodSeconds: {{ .Values.operator.terminationGracePeriodSeconds | default 30 }}
       serviceAccountName: {{ .Values.name }}
       containers:
         - name: {{ .Values.operator.containerName }}
@@ -80,6 +81,10 @@ spec:
 {{- range .Values.operator.extraPorts }}
             - {{ toYaml . | nindent 14 | trim }}
 {{- end }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep {{ .Values.operator.lifecycle.preStopSleepSeconds | default 5 }}"]
 {{- if .Values.operator.probes.liveness.enabled }}
           livenessProbe:
             httpGet:

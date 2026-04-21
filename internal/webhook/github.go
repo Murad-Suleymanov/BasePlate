@@ -195,7 +195,7 @@ func StartServer(ctx context.Context, addr string, handler *GitHubHandler, build
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
 		srv.Shutdown(shutdownCtx)
 	}()
