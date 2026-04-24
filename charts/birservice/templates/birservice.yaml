@@ -90,4 +90,8 @@ spec:
   traffic:
 {{ toYaml .Values.traffic | nindent 4 }}
 {{- end }}
+{{- if .Values.canary }}
+  canary:
+{{ toYaml .Values.canary | nindent 4 }}
+{{- end }}
 
