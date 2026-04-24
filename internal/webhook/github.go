@@ -155,29 +155,24 @@ func (h *BuildCompleteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	image := registryURL + "/" + payload.Service + ":" + payload.Tag
 	l.Info("build complete, deploying", "deployment", depName, "namespace", payload.Namespace, "image", image)
 
-	// Patch deployment with new image (tag-based, rollback üçün)
-	jsonPatch := []byte(`[{"op":"replace","path":"/spec/template/spec/containers/0/image","value":"` + image + `"}]`)
-	dep := &appsv1.Deployment{}
-	dep.Name = depName
-	dep.Namespace = payload.Namespace
-	err = h.Client.Patch(ctx, dep, client.RawPatch(types.JSONPatchType, jsonPatch))
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			http.Error(w, "deployment not found", http.StatusNotFound)
-			return
-		}
-		l.Error(err, "failed to patch deployment", "deployment", depName)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	// BirService status yenilə - controller status.BuildTag istifadə edəcək
+	// BirService status-u əvvəl yenilə — controller reconcile edib deployment yaradacaq.
+	// Bu ilk build-də deployment hələ mövcud olmadıqda da işləyir.
 	bs := &deployv1alpha1.BirService{}
 	if err := h.Client.Get(ctx, types.NamespacedName{Name: payload.Service, Namespace: payload.Namespace}, bs); err == nil {
 		bs.Status.BuildTag = payload.Tag
 		bs.Status.BuildStatus = "Succeeded"
 		bs.Status.BuildImage = image
 		_ = h.Client.Status().Update(ctx, bs)
+	}
+
+	// Mövcud deployment varsa birbaşa patch et (daha sürətli rollout).
+	jsonPatch := []byte(`[{"op":"replace","path":"/spec/template/spec/containers/0/image","value":"` + image + `"}]`)
+	dep := &appsv1.Deployment{}
+	dep.Name = depName
+	dep.Namespace = payload.Namespace
+	err = h.Client.Patch(ctx, dep, client.RawPatch(types.JSONPatchType, jsonPatch))
+	if err != nil && !apierrors.IsNotFound(err) {
+		l.Error(err, "failed to patch deployment", "deployment", depName)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
