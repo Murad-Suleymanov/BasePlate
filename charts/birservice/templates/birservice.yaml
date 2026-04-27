@@ -94,4 +94,12 @@ spec:
   canary:
 {{ toYaml .Values.canary | nindent 4 }}
 {{- end }}
+{{- if .Values.readinessProbe }}
+  readinessProbe:
+{{ toYaml .Values.readinessProbe | nindent 4 }}
+{{- end }}
+{{- if .Values.livenessProbe }}
+  livenessProbe:
+{{ toYaml .Values.livenessProbe | nindent 4 }}
+{{- end }}
 
