@@ -53,6 +53,16 @@ func (in *BirServiceSpec) DeepCopyInto(out *BirServiceSpec) {
 		*out = new(TrafficSpec)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.ReadinessProbe != nil {
+		in, out := &in.ReadinessProbe, &out.ReadinessProbe
+		*out = new(ProbeSpec)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.LivenessProbe != nil {
+		in, out := &in.LivenessProbe, &out.LivenessProbe
+		*out = new(ProbeSpec)
+		(*in).DeepCopyInto(*out)
+	}
 }
 
 func (in *TrafficSpec) DeepCopyInto(out *TrafficSpec) {
@@ -105,6 +115,24 @@ func (in *LocalRateLimitSpec) DeepCopy() *LocalRateLimitSpec {
 		return nil
 	}
 	out := new(LocalRateLimitSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *ProbeSpec) DeepCopyInto(out *ProbeSpec) {
+	*out = *in
+	if in.Port != nil {
+		in, out := &in.Port, &out.Port
+		*out = new(int32)
+		**out = **in
+	}
+}
+
+func (in *ProbeSpec) DeepCopy() *ProbeSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(ProbeSpec)
 	in.DeepCopyInto(out)
 	return out
 }

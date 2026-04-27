@@ -67,6 +67,14 @@ type BirServiceSpec struct {
 	// Canary enables a parallel canary deployment with weighted HTTPRoute traffic splitting.
 	// Set enabled: false or remove this field to tear down the canary infra.
 	Canary *CanarySpec `json:"canary,omitempty"`
+
+	// ReadinessProbe configures the HTTP readiness probe. Port defaults to the container port.
+	// Operator applies default timings (initialDelay=5s, period=5s, failureThreshold=3).
+	ReadinessProbe *ProbeSpec `json:"readinessProbe,omitempty"`
+
+	// LivenessProbe configures the HTTP liveness probe. Port defaults to the container port.
+	// Operator applies default timings (initialDelay=15s, period=10s, failureThreshold=3).
+	LivenessProbe *ProbeSpec `json:"livenessProbe,omitempty"`
 }
 
 // TrafficSpec groups mesh traffic settings. Presence of spec.traffic means mesh intent;
@@ -125,6 +133,13 @@ type CanarySpec struct {
 	Image string `json:"image,omitempty"`
 	// Tag overrides the image tag for the canary deployment (e.g. "v2.0.0-rc1").
 	Tag string `json:"tag,omitempty"`
+}
+
+// ProbeSpec configures an HTTP liveness or readiness probe.
+// Port defaults to the container port when omitted.
+type ProbeSpec struct {
+	Path string `json:"path"`
+	Port *int32 `json:"port,omitempty"`
 }
 
 // MetricsSpec configures Prometheus scraping for custom application metrics.

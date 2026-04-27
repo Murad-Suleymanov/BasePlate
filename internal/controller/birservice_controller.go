@@ -175,26 +175,73 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 				}
 			}
 
-			gracePeriod := int64(30)
+			maxUnavailable := intstr.FromInt(0)
+			maxSurge := intstr.FromInt(1)
+			dep.Spec.Strategy = appsv1.DeploymentStrategy{
+				Type: appsv1.RollingUpdateDeploymentStrategyType,
+				RollingUpdate: &appsv1.RollingUpdateDeployment{
+					MaxUnavailable: &maxUnavailable,
+					MaxSurge:       &maxSurge,
+				},
+			}
+
+			gracePeriod := int64(70)
 			templateSpec.TerminationGracePeriodSeconds = &gracePeriod
-			templateSpec.Containers = []corev1.Container{
-				{
-					Name:            "app",
-					Image:           image,
-					ImagePullPolicy: corev1.PullAlways, // rollout restart-da yeni image çəkilir (:latest və ya :sha)
-					Ports: []corev1.ContainerPort{
-						{ContainerPort: containerPort},
-					},
-					Resources: resourceReqs,
-					Lifecycle: &corev1.Lifecycle{
-						PreStop: &corev1.Handler{
-							Exec: &corev1.ExecAction{
-								Command: []string{"/bin/sh", "-c", "sleep 5"},
-							},
+
+			container := corev1.Container{
+				Name:            "app",
+				Image:           image,
+				ImagePullPolicy: corev1.PullAlways,
+				Ports: []corev1.ContainerPort{
+					{ContainerPort: containerPort},
+				},
+				Resources: resourceReqs,
+				Lifecycle: &corev1.Lifecycle{
+					PreStop: &corev1.Handler{
+						Exec: &corev1.ExecAction{
+							Command: []string{"/bin/sh", "-c", "sleep 15"},
 						},
 					},
 				},
 			}
+
+			if bs.Spec.ReadinessProbe != nil {
+				probePort := containerPort
+				if bs.Spec.ReadinessProbe.Port != nil {
+					probePort = *bs.Spec.ReadinessProbe.Port
+				}
+				container.ReadinessProbe = &corev1.Probe{
+					Handler: corev1.Handler{
+						HTTPGet: &corev1.HTTPGetAction{
+							Path: bs.Spec.ReadinessProbe.Path,
+							Port: intstr.FromInt(int(probePort)),
+						},
+					},
+					InitialDelaySeconds: 5,
+					PeriodSeconds:       5,
+					FailureThreshold:    3,
+				}
+			}
+
+			if bs.Spec.LivenessProbe != nil {
+				probePort := containerPort
+				if bs.Spec.LivenessProbe.Port != nil {
+					probePort = *bs.Spec.LivenessProbe.Port
+				}
+				container.LivenessProbe = &corev1.Probe{
+					Handler: corev1.Handler{
+						HTTPGet: &corev1.HTTPGetAction{
+							Path: bs.Spec.LivenessProbe.Path,
+							Port: intstr.FromInt(int(probePort)),
+						},
+					},
+					InitialDelaySeconds: 15,
+					PeriodSeconds:       10,
+					FailureThreshold:    3,
+				}
+			}
+
+			templateSpec.Containers = []corev1.Container{container}
 
 			return ctrl.SetControllerReference(bs, &dep, r.Scheme)
 		})
