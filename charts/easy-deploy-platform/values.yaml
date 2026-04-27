@@ -284,6 +284,28 @@ crd:
                   type: integer
                   format: int32
                   minimum: 0
+    readinessProbe:
+      type: object
+      description: "HTTP readiness probe. Port defaults to container port."
+      properties:
+        path:
+          type: string
+        port:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 65535
+    livenessProbe:
+      type: object
+      description: "HTTP liveness probe. Port defaults to container port."
+      properties:
+        path:
+          type: string
+        port:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 65535
   statusProperties:
     availableReplicas:
       type: integer

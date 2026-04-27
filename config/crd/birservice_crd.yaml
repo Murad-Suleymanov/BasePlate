@@ -169,6 +169,28 @@ spec:
                               format: int32
                               minimum: 0
                               description: Extra burst capacity added to token bucket max_tokens.
+                readinessProbe:
+                  type: object
+                  description: HTTP readiness probe. Port defaults to container port.
+                  properties:
+                    path:
+                      type: string
+                    port:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                      maximum: 65535
+                livenessProbe:
+                  type: object
+                  description: HTTP liveness probe. Port defaults to container port.
+                  properties:
+                    path:
+                      type: string
+                    port:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                      maximum: 65535
             status:
               type: object
               properties:
