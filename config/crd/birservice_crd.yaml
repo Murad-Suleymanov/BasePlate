@@ -191,6 +191,20 @@ spec:
                       format: int32
                       minimum: 1
                       maximum: 65535
+                strategy:
+                  type: object
+                  description: Deployment update strategy. Defaults to RollingUpdate (maxUnavailable=0, maxSurge=25%).
+                  properties:
+                    type:
+                      type: string
+                      enum: ["RollingUpdate", "Recreate"]
+                      description: RollingUpdate (default, zero-downtime) or Recreate (kill-all then start-all; required for stateful/singleton apps).
+                    maxSurge:
+                      x-kubernetes-int-or-string: true
+                      description: Max pods above desired during rolling update. Default "25%". Ignored for Recreate.
+                    maxUnavailable:
+                      x-kubernetes-int-or-string: true
+                      description: Max pods unavailable during rolling update. Default 0. Ignored for Recreate.
             status:
               type: object
               properties:

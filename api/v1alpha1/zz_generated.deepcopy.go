@@ -4,6 +4,7 @@ package v1alpha1
 
 import (
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 func (in *BirServiceSpec) DeepCopyInto(out *BirServiceSpec) {
@@ -63,6 +64,34 @@ func (in *BirServiceSpec) DeepCopyInto(out *BirServiceSpec) {
 		*out = new(ProbeSpec)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.Strategy != nil {
+		in, out := &in.Strategy, &out.Strategy
+		*out = new(StrategySpec)
+		(*in).DeepCopyInto(*out)
+	}
+}
+
+func (in *StrategySpec) DeepCopyInto(out *StrategySpec) {
+	*out = *in
+	if in.MaxSurge != nil {
+		in, out := &in.MaxSurge, &out.MaxSurge
+		*out = new(intstr.IntOrString)
+		**out = **in
+	}
+	if in.MaxUnavailable != nil {
+		in, out := &in.MaxUnavailable, &out.MaxUnavailable
+		*out = new(intstr.IntOrString)
+		**out = **in
+	}
+}
+
+func (in *StrategySpec) DeepCopy() *StrategySpec {
+	if in == nil {
+		return nil
+	}
+	out := new(StrategySpec)
+	in.DeepCopyInto(out)
+	return out
 }
 
 func (in *TrafficSpec) DeepCopyInto(out *TrafficSpec) {

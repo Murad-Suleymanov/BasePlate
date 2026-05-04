@@ -43,3 +43,12 @@ metrics: true
 #       requestsPerSecond: 100
 #       burst: 20
 # traffic: yazılmasa mesh idarəsi yoxdur; minimal mesh üçün: traffic: {}
+
+# strategy: Deployment update strategy. Yazılmasa default — RollingUpdate, maxUnavailable=0, maxSurge=25%.
+# Recreate: stateful/singleton tətbiqlər üçün (downtime qəbul olunur).
+# strategy:
+#   type: RollingUpdate
+#   maxSurge: 25%
+#   maxUnavailable: 0
+# strategy:
+#   type: Recreate

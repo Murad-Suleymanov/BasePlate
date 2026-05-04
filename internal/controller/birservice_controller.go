@@ -175,15 +175,10 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 				}
 			}
 
-			maxUnavailable := intstr.FromInt(0)
-			maxSurge := intstr.FromInt(1)
-			dep.Spec.Strategy = appsv1.DeploymentStrategy{
-				Type: appsv1.RollingUpdateDeploymentStrategyType,
-				RollingUpdate: &appsv1.RollingUpdateDeployment{
-					MaxUnavailable: &maxUnavailable,
-					MaxSurge:       &maxSurge,
-				},
-			}
+			dep.Spec.Strategy = resolveDeploymentStrategy(bs)
+			dep.Spec.MinReadySeconds = 5
+			dep.Spec.ProgressDeadlineSeconds = int32Ptr(600)
+			dep.Spec.RevisionHistoryLimit = int32Ptr(5)
 
 			gracePeriod := int64(70)
 			templateSpec.TerminationGracePeriodSeconds = &gracePeriod
@@ -218,6 +213,19 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 						},
 					},
 					InitialDelaySeconds: 5,
+					PeriodSeconds:       5,
+					FailureThreshold:    3,
+				}
+			} else {
+				// Default TCP readiness probe — guarantees zero-downtime rolling updates
+				// even when users forget to declare an HTTP probe. Without this, K8s marks
+				// pods Ready as soon as the container is Running, causing premature old-pod
+				// termination while the new app is still initializing.
+				container.ReadinessProbe = &corev1.Probe{
+					Handler: corev1.Handler{
+						TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt(int(containerPort))},
+					},
+					InitialDelaySeconds: 3,
 					PeriodSeconds:       5,
 					FailureThreshold:    3,
 				}
@@ -278,6 +286,10 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 	}
 
 	if err := r.reconcileHPA(ctx, bs, depName, labels, minReplicas, maxReplicas); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.reconcilePDB(ctx, bs, labels, replicas, minReplicas); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -719,6 +731,91 @@ func resolveImage(bs *deployv1alpha1.BirService) (string, error) {
 }
 
 func int32Ptr(i int32) *int32 { return &i }
+
+// resolveDeploymentStrategy maps spec.strategy to an apps/v1 DeploymentStrategy.
+// Defaults: RollingUpdate, maxUnavailable=0, maxSurge=25%.
+func resolveDeploymentStrategy(bs *deployv1alpha1.BirService) appsv1.DeploymentStrategy {
+	if bs.Spec.Strategy != nil && strings.EqualFold(bs.Spec.Strategy.Type, "Recreate") {
+		return appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
+	}
+	maxUnavailable := intstr.FromInt(0)
+	maxSurge := intstr.FromString("25%")
+	if bs.Spec.Strategy != nil {
+		if bs.Spec.Strategy.MaxUnavailable != nil {
+			maxUnavailable = *bs.Spec.Strategy.MaxUnavailable
+		}
+		if bs.Spec.Strategy.MaxSurge != nil {
+			maxSurge = *bs.Spec.Strategy.MaxSurge
+		}
+	}
+	return appsv1.DeploymentStrategy{
+		Type: appsv1.RollingUpdateDeploymentStrategyType,
+		RollingUpdate: &appsv1.RollingUpdateDeployment{
+			MaxUnavailable: &maxUnavailable,
+			MaxSurge:       &maxSurge,
+		},
+	}
+}
+
+// reconcilePDB ensures a PodDisruptionBudget exists for the workload when the
+// effective minimum replica count is >= 2 (replicas>=2 OR HPA minReplicas>=2).
+// Otherwise any existing PDB is deleted. PDB is also skipped for Recreate strategy
+// since voluntary-disruption protection is meaningless when the rollout is all-or-nothing.
+// Uses unstructured policy/v1 to avoid pulling a newer k8s.io/api dependency.
+func (r *BirServiceReconciler) reconcilePDB(ctx context.Context, bs *deployv1alpha1.BirService, podLabels map[string]string, replicas *int32, hpaMin *int32) error {
+	pdbName := fmt.Sprintf("%s-pdb", bs.Name)
+	gvk := schema.GroupVersionKind{Group: "policy", Version: "v1", Kind: "PodDisruptionBudget"}
+	key := types.NamespacedName{Name: pdbName, Namespace: bs.Namespace}
+
+	deletePDB := func() error {
+		existing := &unstructured.Unstructured{}
+		existing.SetGroupVersionKind(gvk)
+		err := r.Get(ctx, key, existing)
+		if err == nil {
+			return client.IgnoreNotFound(r.Delete(ctx, existing))
+		}
+		return client.IgnoreNotFound(err)
+	}
+
+	// Recreate strategy: skip PDB
+	if bs.Spec.Strategy != nil && strings.EqualFold(bs.Spec.Strategy.Type, "Recreate") {
+		return deletePDB()
+	}
+
+	// Effective min replicas
+	effectiveMin := int32(0)
+	if replicas != nil {
+		effectiveMin = *replicas
+	} else if hpaMin != nil {
+		effectiveMin = *hpaMin
+	}
+	if effectiveMin < 2 {
+		return deletePDB()
+	}
+
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		pdb := &unstructured.Unstructured{}
+		pdb.SetGroupVersionKind(gvk)
+		pdb.SetName(pdbName)
+		pdb.SetNamespace(bs.Namespace)
+
+		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, pdb, func() error {
+			matchLabels := map[string]interface{}{}
+			for k, v := range podLabels {
+				matchLabels[k] = v
+			}
+			pdb.Object["spec"] = map[string]interface{}{
+				"minAvailable": "50%",
+				"selector": map[string]interface{}{
+					"matchLabels": matchLabels,
+				},
+			}
+			pdb.SetLabels(mergeStringMap(pdb.GetLabels(), podLabels))
+			return ctrl.SetControllerReference(bs, pdb, r.Scheme)
+		})
+		return err
+	})
+}
 
 var httpRouteGVK = schema.GroupVersionKind{
 	Group:   "gateway.networking.k8s.io",

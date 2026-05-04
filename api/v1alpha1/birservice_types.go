@@ -2,6 +2,7 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // BirServiceSpec defines the desired state of BirService
@@ -75,6 +76,25 @@ type BirServiceSpec struct {
 	// LivenessProbe configures the HTTP liveness probe. Port defaults to the container port.
 	// Operator applies default timings (initialDelay=15s, period=10s, failureThreshold=3).
 	LivenessProbe *ProbeSpec `json:"livenessProbe,omitempty"`
+
+	// Strategy controls deployment update strategy. When omitted, defaults to
+	// RollingUpdate with maxUnavailable=0 and maxSurge=25%.
+	Strategy *StrategySpec `json:"strategy,omitempty"`
+}
+
+// StrategySpec selects the Deployment update strategy and tunes its rolling parameters.
+// Allowed Type values are "RollingUpdate" (default, zero-downtime) and "Recreate"
+// (kill-all then start-all; required for stateful/singleton apps that cannot run two
+// versions concurrently — accepts downtime during rollout).
+type StrategySpec struct {
+	// Type is "RollingUpdate" (default) or "Recreate". Empty means RollingUpdate.
+	Type string `json:"type,omitempty"`
+	// MaxSurge is the max number/percent of pods above desired during a rolling update.
+	// Default "25%". Ignored for Recreate.
+	MaxSurge *intstr.IntOrString `json:"maxSurge,omitempty"`
+	// MaxUnavailable is the max number/percent of pods that can be unavailable during a
+	// rolling update. Default 0 (zero-downtime). Ignored for Recreate.
+	MaxUnavailable *intstr.IntOrString `json:"maxUnavailable,omitempty"`
 }
 
 // TrafficSpec groups mesh traffic settings. Presence of spec.traffic means mesh intent;
