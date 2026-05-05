@@ -80,6 +80,23 @@ type BirServiceSpec struct {
 	// Strategy controls deployment update strategy. When omitted, defaults to
 	// RollingUpdate with maxUnavailable=0 and maxSurge=25%.
 	Strategy *StrategySpec `json:"strategy,omitempty"`
+
+	// Shutdown tunes graceful termination. preStopSleepSeconds drains endpoints
+	// before SIGTERM; terminationGracePeriodSeconds is auto-derived as preStopSleep + 5.
+	Shutdown *ShutdownSpec `json:"shutdown,omitempty"`
+}
+
+// ShutdownSpec configures graceful pod termination. The operator computes
+// terminationGracePeriodSeconds as PreStopSleepSeconds + DrainBufferSeconds.
+type ShutdownSpec struct {
+	// PreStopSleepSeconds is how long the container sleeps in its preStop hook before
+	// receiving SIGTERM. Used to drain endpoints from kube-proxy / Istio xDS / Gateways
+	// while the app is still alive. Default 15.
+	PreStopSleepSeconds *int32 `json:"preStopSleepSeconds,omitempty"`
+	// DrainBufferSeconds is the post-SIGTERM budget for the app to finish in-flight
+	// requests before SIGKILL. terminationGracePeriodSeconds = PreStopSleepSeconds + DrainBufferSeconds.
+	// Default 5. Increase for apps with long-running requests (uploads, streaming, batch).
+	DrainBufferSeconds *int32 `json:"drainBufferSeconds,omitempty"`
 }
 
 // StrategySpec selects the Deployment update strategy and tunes its rolling parameters.

@@ -106,4 +106,8 @@ spec:
   strategy:
 {{ toYaml .Values.strategy | nindent 4 }}
 {{- end }}
+{{- if .Values.shutdown }}
+  shutdown:
+{{ toYaml .Values.shutdown | nindent 4 }}
+{{- end }}
 

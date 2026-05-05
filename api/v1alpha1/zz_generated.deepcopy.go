@@ -69,6 +69,34 @@ func (in *BirServiceSpec) DeepCopyInto(out *BirServiceSpec) {
 		*out = new(StrategySpec)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.Shutdown != nil {
+		in, out := &in.Shutdown, &out.Shutdown
+		*out = new(ShutdownSpec)
+		(*in).DeepCopyInto(*out)
+	}
+}
+
+func (in *ShutdownSpec) DeepCopyInto(out *ShutdownSpec) {
+	*out = *in
+	if in.PreStopSleepSeconds != nil {
+		in, out := &in.PreStopSleepSeconds, &out.PreStopSleepSeconds
+		*out = new(int32)
+		**out = **in
+	}
+	if in.DrainBufferSeconds != nil {
+		in, out := &in.DrainBufferSeconds, &out.DrainBufferSeconds
+		*out = new(int32)
+		**out = **in
+	}
+}
+
+func (in *ShutdownSpec) DeepCopy() *ShutdownSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(ShutdownSpec)
+	in.DeepCopyInto(out)
+	return out
 }
 
 func (in *StrategySpec) DeepCopyInto(out *StrategySpec) {

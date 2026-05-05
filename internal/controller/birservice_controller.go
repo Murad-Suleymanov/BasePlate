@@ -180,7 +180,8 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 			dep.Spec.ProgressDeadlineSeconds = int32Ptr(600)
 			dep.Spec.RevisionHistoryLimit = int32Ptr(5)
 
-			gracePeriod := int64(70)
+			preStopSleep, drainBuffer := resolveShutdown(bs)
+			gracePeriod := int64(preStopSleep) + int64(drainBuffer)
 			templateSpec.TerminationGracePeriodSeconds = &gracePeriod
 
 			container := corev1.Container{
@@ -194,7 +195,7 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 				Lifecycle: &corev1.Lifecycle{
 					PreStop: &corev1.Handler{
 						Exec: &corev1.ExecAction{
-							Command: []string{"/bin/sh", "-c", "sleep 15"},
+							Command: []string{"/bin/sh", "-c", fmt.Sprintf("sleep %d", preStopSleep)},
 						},
 					},
 				},
@@ -731,6 +732,22 @@ func resolveImage(bs *deployv1alpha1.BirService) (string, error) {
 }
 
 func int32Ptr(i int32) *int32 { return &i }
+
+// resolveShutdown returns (preStopSleep, drainBuffer) seconds. Defaults: sleep=15, buffer=5.
+// terminationGracePeriodSeconds is preStopSleep + drainBuffer.
+func resolveShutdown(bs *deployv1alpha1.BirService) (int32, int32) {
+	sleep := int32(15)
+	buffer := int32(5)
+	if bs.Spec.Shutdown != nil {
+		if bs.Spec.Shutdown.PreStopSleepSeconds != nil && *bs.Spec.Shutdown.PreStopSleepSeconds >= 0 {
+			sleep = *bs.Spec.Shutdown.PreStopSleepSeconds
+		}
+		if bs.Spec.Shutdown.DrainBufferSeconds != nil && *bs.Spec.Shutdown.DrainBufferSeconds >= 0 {
+			buffer = *bs.Spec.Shutdown.DrainBufferSeconds
+		}
+	}
+	return sleep, buffer
+}
 
 // resolveDeploymentStrategy maps spec.strategy to an apps/v1 DeploymentStrategy.
 // Defaults: RollingUpdate, maxUnavailable=0, maxSurge=25%.

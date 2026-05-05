@@ -52,3 +52,13 @@ metrics: true
 #   maxUnavailable: 0
 # strategy:
 #   type: Recreate
+
+# shutdown: graceful termination konfiqurasiyası.
+# preStopSleepSeconds — SIGTERM-dən əvvəl saniyə (endpoint drain). Default 15.
+# drainBufferSeconds — SIGTERM-dən sonra in-flight request-lər üçün vaxt. Default 5.
+# terminationGracePeriodSeconds avtomatik = preStopSleepSeconds + drainBufferSeconds.
+# Default kombinasiya: 15 + 5 = 20s grace.
+# Uzun upload/streaming/batch üçün drainBufferSeconds-ı artır.
+# shutdown:
+#   preStopSleepSeconds: 30
+#   drainBufferSeconds: 60

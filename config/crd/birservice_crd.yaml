@@ -191,6 +191,22 @@ spec:
                       format: int32
                       minimum: 1
                       maximum: 65535
+                shutdown:
+                  type: object
+                  description: Graceful termination tuning. terminationGracePeriodSeconds = preStopSleepSeconds + drainBufferSeconds.
+                  properties:
+                    preStopSleepSeconds:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      maximum: 600
+                      description: Seconds the container sleeps before SIGTERM (drains endpoints from kube-proxy/Istio xDS/Gateway). Default 15.
+                    drainBufferSeconds:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      maximum: 600
+                      description: Post-SIGTERM budget for in-flight requests to finish before SIGKILL. Default 5. Increase for long requests (uploads, streaming).
                 strategy:
                   type: object
                   description: Deployment update strategy. Defaults to RollingUpdate (maxUnavailable=0, maxSurge=25%).
