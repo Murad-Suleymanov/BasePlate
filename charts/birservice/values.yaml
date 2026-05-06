@@ -62,3 +62,14 @@ metrics: true
 # shutdown:
 #   preStopSleepSeconds: 30
 #   drainBufferSeconds: 60
+
+# tracing: OpenTelemetry distributed tracing.
+# enabled: true → operator pod-a OTel Operator inject annotation əlavə edir.
+# runtime: auto (default) → Dockerfile/image-dən aşkar et.
+#          explicit: java | python | nodejs | dotnet | go
+#          none — annotation qoyma (manual SDK ilə instrument olunmuş app üçün)
+# samplingRatio: head sampling (məs. "0.1" = 10%). Tail sampling cluster-də override edir.
+# tracing:
+#   enabled: true
+#   runtime: auto
+#   samplingRatio: "0.1"

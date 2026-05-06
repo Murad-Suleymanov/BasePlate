@@ -191,6 +191,17 @@ spec:
                       format: int32
                       minimum: 1
                       maximum: 65535
+                tracing:
+                  type: object
+                  description: OpenTelemetry distributed tracing tuning. Tracing is always on platform-wide; this field only overrides runtime detection or sampling.
+                  properties:
+                    runtime:
+                      type: string
+                      enum: ["auto", "java", "python", "nodejs", "dotnet", "go", "none"]
+                      description: "auto (default) detects from image; explicit values force a specific OTel agent; none disables OTel agent injection (use with manual SDK)."
+                    samplingRatio:
+                      type: string
+                      description: "Head sampling ratio (e.g. \"0.1\" = 10%). Tail sampling on the OTel Collector overrides this when configured."
                 shutdown:
                   type: object
                   description: Graceful termination tuning. terminationGracePeriodSeconds = preStopSleepSeconds + drainBufferSeconds.

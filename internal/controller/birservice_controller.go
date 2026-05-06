@@ -166,6 +166,7 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 			}
 			dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
 			dep.Spec.Template.ObjectMeta.Labels = labels
+			dep.Spec.Template.ObjectMeta.Annotations = r.tracingAnnotations(ctx, bs, dep.Spec.Template.ObjectMeta.Annotations)
 
 			// Image internal registry-dəndirsə, pull üçün registry-push secret lazımdır
 			templateSpec := &dep.Spec.Template.Spec
@@ -732,6 +733,71 @@ func resolveImage(bs *deployv1alpha1.BirService) (string, error) {
 }
 
 func int32Ptr(i int32) *int32 { return &i }
+
+// tracingAnnotations returns the pod template annotations with the OpenTelemetry
+// Operator inject-* annotation set. Tracing is always on platform-wide — the only
+// way to skip OTel agent injection is spec.tracing.runtime: "none" (manual SDK case).
+// Existing annotations (e.g. kubectl.kubernetes.io/restartedAt) are preserved; stale
+// inject-* annotations are cleared so a runtime change does not leave both.
+func (r *BirServiceReconciler) tracingAnnotations(ctx context.Context, bs *deployv1alpha1.BirService, existing map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range existing {
+		if strings.HasPrefix(k, "instrumentation.opentelemetry.io/inject-") {
+			continue
+		}
+		out[k] = v
+	}
+	runtime := r.resolveTracingRuntime(ctx, bs)
+	if runtime == "" || runtime == "none" {
+		return out
+	}
+	out[fmt.Sprintf("instrumentation.opentelemetry.io/inject-%s", runtime)] = "true"
+	out["instrumentation.opentelemetry.io/container-names"] = "app"
+	if bs.Spec.Tracing != nil && bs.Spec.Tracing.SamplingRatio != nil && strings.TrimSpace(*bs.Spec.Tracing.SamplingRatio) != "" {
+		out["instrumentation.opentelemetry.io/sampler-arg"] = strings.TrimSpace(*bs.Spec.Tracing.SamplingRatio)
+	}
+	return out
+}
+
+// resolveTracingRuntime returns the runtime keyword OTel Operator expects on the
+// inject-* annotation. Priority: explicit spec.tracing.runtime > image config inspect
+// (registry image) > Dockerfile FROM parsing (git build). Returns "" when no signal.
+func (r *BirServiceReconciler) resolveTracingRuntime(ctx context.Context, bs *deployv1alpha1.BirService) string {
+	l := log.FromContext(ctx)
+	declared := ""
+	if bs.Spec.Tracing != nil {
+		declared = strings.ToLower(strings.TrimSpace(bs.Spec.Tracing.Runtime))
+	}
+	switch declared {
+	case "java", "python", "nodejs", "dotnet", "go", "none":
+		return declared
+	case "node": // common alias
+		return registry.RuntimeNodeJS
+	case "", "auto":
+		// fall through to detection
+	default:
+		l.Info("tracing.runtime not recognized, falling back to auto-detect", "value", declared)
+	}
+
+	registryURL := r.effectiveRegistryURL()
+	imageTag := bs.Status.BuildTag
+	if imageTag == "" {
+		imageTag = bs.Spec.Tag
+	}
+	if imageTag == "" {
+		imageTag = "latest"
+	}
+	if rt := registry.InspectRuntime(registryURL, bs.Name, imageTag); rt != "" {
+		return rt
+	}
+	if owner, repo, ok := injector.ParseGitHubRepo(bs.Spec.Repo); ok {
+		if rt := registry.RuntimeFromDockerfile(owner, repo, bs.Spec.Tag, bs.Spec.Dockerfile); rt != "" {
+			return rt
+		}
+	}
+	l.Info("tracing enabled but runtime could not be auto-detected; skipping inject annotation", "birservice", bs.Name)
+	return ""
+}
 
 // resolveShutdown returns (preStopSleep, drainBuffer) seconds. Defaults: sleep=15, buffer=5.
 // terminationGracePeriodSeconds is preStopSleep + drainBuffer.

@@ -74,6 +74,29 @@ func (in *BirServiceSpec) DeepCopyInto(out *BirServiceSpec) {
 		*out = new(ShutdownSpec)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.Tracing != nil {
+		in, out := &in.Tracing, &out.Tracing
+		*out = new(TracingSpec)
+		(*in).DeepCopyInto(*out)
+	}
+}
+
+func (in *TracingSpec) DeepCopyInto(out *TracingSpec) {
+	*out = *in
+	if in.SamplingRatio != nil {
+		in, out := &in.SamplingRatio, &out.SamplingRatio
+		*out = new(string)
+		**out = **in
+	}
+}
+
+func (in *TracingSpec) DeepCopy() *TracingSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(TracingSpec)
+	in.DeepCopyInto(out)
+	return out
 }
 
 func (in *ShutdownSpec) DeepCopyInto(out *ShutdownSpec) {
