@@ -736,7 +736,9 @@ func int32Ptr(i int32) *int32 { return &i }
 
 // tracingAnnotations returns the pod template annotations with the OpenTelemetry
 // Operator inject-* annotation set. Tracing is always on platform-wide — no per-workload
-// config needed. Existing annotations are preserved; stale inject-* annotations are
+// config needed. The annotation value points at the cluster-wide Instrumentation CR
+// "observability/default" so workloads in any namespace get the same exporter and
+// sampler config. Existing annotations are preserved; stale inject-* annotations are
 // cleared so a runtime change does not leave both.
 func (r *BirServiceReconciler) tracingAnnotations(ctx context.Context, bs *deployv1alpha1.BirService, existing map[string]string) map[string]string {
 	out := map[string]string{}
@@ -750,9 +752,8 @@ func (r *BirServiceReconciler) tracingAnnotations(ctx context.Context, bs *deplo
 	if runtime == "" {
 		return out
 	}
-	out[fmt.Sprintf("instrumentation.opentelemetry.io/inject-%s", runtime)] = "true"
+	out[fmt.Sprintf("instrumentation.opentelemetry.io/inject-%s", runtime)] = "observability/default"
 	out["instrumentation.opentelemetry.io/container-names"] = "app"
-	out["instrumentation.opentelemetry.io/sampler-arg"] = "0.1"
 	return out
 }
 
