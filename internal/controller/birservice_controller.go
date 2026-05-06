@@ -735,10 +735,9 @@ func resolveImage(bs *deployv1alpha1.BirService) (string, error) {
 func int32Ptr(i int32) *int32 { return &i }
 
 // tracingAnnotations returns the pod template annotations with the OpenTelemetry
-// Operator inject-* annotation set. Tracing is always on platform-wide — the only
-// way to skip OTel agent injection is spec.tracing.runtime: "none" (manual SDK case).
-// Existing annotations (e.g. kubectl.kubernetes.io/restartedAt) are preserved; stale
-// inject-* annotations are cleared so a runtime change does not leave both.
+// Operator inject-* annotation set. Tracing is always on platform-wide — no per-workload
+// config needed. Existing annotations are preserved; stale inject-* annotations are
+// cleared so a runtime change does not leave both.
 func (r *BirServiceReconciler) tracingAnnotations(ctx context.Context, bs *deployv1alpha1.BirService, existing map[string]string) map[string]string {
 	out := map[string]string{}
 	for k, v := range existing {
@@ -748,37 +747,20 @@ func (r *BirServiceReconciler) tracingAnnotations(ctx context.Context, bs *deplo
 		out[k] = v
 	}
 	runtime := r.resolveTracingRuntime(ctx, bs)
-	if runtime == "" || runtime == "none" {
+	if runtime == "" {
 		return out
 	}
 	out[fmt.Sprintf("instrumentation.opentelemetry.io/inject-%s", runtime)] = "true"
 	out["instrumentation.opentelemetry.io/container-names"] = "app"
-	if bs.Spec.Tracing != nil && bs.Spec.Tracing.SamplingRatio != nil && strings.TrimSpace(*bs.Spec.Tracing.SamplingRatio) != "" {
-		out["instrumentation.opentelemetry.io/sampler-arg"] = strings.TrimSpace(*bs.Spec.Tracing.SamplingRatio)
-	}
+	out["instrumentation.opentelemetry.io/sampler-arg"] = "0.1"
 	return out
 }
 
-// resolveTracingRuntime returns the runtime keyword OTel Operator expects on the
-// inject-* annotation. Priority: explicit spec.tracing.runtime > image config inspect
-// (registry image) > Dockerfile FROM parsing (git build). Returns "" when no signal.
+// resolveTracingRuntime detects the OTel inject-* runtime from the image config
+// (registry inspect) or Dockerfile FROM line. Returns "" when runtime cannot be
+// determined and OTel injection is skipped.
 func (r *BirServiceReconciler) resolveTracingRuntime(ctx context.Context, bs *deployv1alpha1.BirService) string {
 	l := log.FromContext(ctx)
-	declared := ""
-	if bs.Spec.Tracing != nil {
-		declared = strings.ToLower(strings.TrimSpace(bs.Spec.Tracing.Runtime))
-	}
-	switch declared {
-	case "java", "python", "nodejs", "dotnet", "go", "none":
-		return declared
-	case "node": // common alias
-		return registry.RuntimeNodeJS
-	case "", "auto":
-		// fall through to detection
-	default:
-		l.Info("tracing.runtime not recognized, falling back to auto-detect", "value", declared)
-	}
-
 	registryURL := r.effectiveRegistryURL()
 	imageTag := bs.Status.BuildTag
 	if imageTag == "" {
@@ -795,7 +777,7 @@ func (r *BirServiceReconciler) resolveTracingRuntime(ctx context.Context, bs *de
 			return rt
 		}
 	}
-	l.Info("tracing enabled but runtime could not be auto-detected; skipping inject annotation", "birservice", bs.Name)
+	l.Info("tracing runtime could not be auto-detected; skipping inject annotation", "birservice", bs.Name)
 	return ""
 }
 

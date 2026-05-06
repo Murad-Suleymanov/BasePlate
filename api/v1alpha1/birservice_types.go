@@ -84,31 +84,6 @@ type BirServiceSpec struct {
 	// Shutdown tunes graceful termination. preStopSleepSeconds drains endpoints
 	// before SIGTERM; terminationGracePeriodSeconds is auto-derived as preStopSleep + 5.
 	Shutdown *ShutdownSpec `json:"shutdown,omitempty"`
-
-	// Tracing enables OpenTelemetry distributed tracing for this workload. When
-	// runtime is "auto" (default), the operator inspects the Dockerfile / image
-	// config to pick the right OTel auto-instrumentation. Pod gets the matching
-	// OpenTelemetry Operator inject annotation.
-	Tracing *TracingSpec `json:"tracing,omitempty"`
-}
-
-// TracingSpec configures OpenTelemetry distributed tracing. Tracing is always on
-// platform-wide; this struct only exposes per-workload tuning (runtime override and
-// sampling). Set Runtime to "none" to skip OTel auto-instrumentation when the app is
-// already manually instrumented via the SDK (Istio waypoint will still emit L7 spans).
-//
-// Annotation contract: when Runtime resolves to a known value, the operator sets
-//   instrumentation.opentelemetry.io/inject-<runtime>: "true"
-// on the pod template, which the OpenTelemetry Operator's mutating webhook acts on.
-type TracingSpec struct {
-	// Runtime selects the auto-instrumentation language. "auto" (default) makes the
-	// operator detect from Dockerfile / image config. Explicit values:
-	// "java", "python", "nodejs", "dotnet", "go". "none" disables OTel agent injection
-	// (use this when the app is manually instrumented via the OTel SDK).
-	Runtime string `json:"runtime,omitempty"`
-	// SamplingRatio is the head-sampling probability (0.0–1.0). Default 0.1 (10%).
-	// Tail sampling is configured cluster-wide on the OTel Collector and overrides this.
-	SamplingRatio *string `json:"samplingRatio,omitempty"`
 }
 
 // ShutdownSpec configures graceful pod termination. The operator computes
