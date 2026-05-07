@@ -273,6 +273,20 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 
 		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, &svc, func() error {
 			svc.ObjectMeta.Labels = mergeStringMap(svc.ObjectMeta.Labels, labels)
+			// In Istio ambient mode, services need this label to route through the
+			// namespace's waypoint Pod for L7 features (HTTP routing, tracing, RBAC).
+			// Namespace-level use-waypoint label alone is not always honored by ztunnel
+			// for service-VIP traffic; service-level label is the authoritative signal.
+			// Toggle symmetrically with spec.traffic so removing traffic also removes the
+			// label (mergeStringMap only adds — explicit delete is required for removal).
+			if bsNeedsWaypoint(bs) {
+				if svc.ObjectMeta.Labels == nil {
+					svc.ObjectMeta.Labels = map[string]string{}
+				}
+				svc.ObjectMeta.Labels[labelUseWaypoint] = waypointName
+			} else {
+				delete(svc.ObjectMeta.Labels, labelUseWaypoint)
+			}
 
 			svc.Spec.Selector = labels
 			svc.Spec.Type = corev1.ServiceTypeClusterIP
