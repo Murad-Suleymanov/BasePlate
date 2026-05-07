@@ -58,6 +58,10 @@ spec:
             - name: WEBHOOK_URL
               value: {{ .Values.operator.env.webhookURL.value | quote }}
 {{- end }}
+{{- if .Values.operator.env.tracingRatio.enabled }}
+            - name: TRACING_RATIO
+              value: {{ .Values.operator.env.tracingRatio.value | quote }}
+{{- end }}
 {{- range .Values.operator.extraEnv }}
             - name: {{ .name }}
               value: {{ .value | quote }}

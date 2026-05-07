@@ -48,11 +48,12 @@ const (
 
 type BirServiceReconciler struct {
 	client.Client
-	Scheme      *runtime.Scheme
-	BaseDomain  string
-	TargetIP    string
-	RegistryURL string
-	Environment string
+	Scheme       *runtime.Scheme
+	BaseDomain   string
+	TargetIP     string
+	RegistryURL  string
+	Environment  string
+	TracingRatio int
 }
 
 func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res ctrl.Result, err error) {
@@ -301,6 +302,10 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 	}
 
 	if err := r.reconcileHTTPRoute(ctx, bs, svcName, port, cSvcName, cWeight); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.reconcileObservabilityPolicy(ctx, bs); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -889,6 +894,12 @@ var httpRouteGVK = schema.GroupVersionKind{
 	Kind:    "HTTPRoute",
 }
 
+var observabilityPolicyGVK = schema.GroupVersionKind{
+	Group:   "gateway.nginx.org",
+	Version: "v1alpha2",
+	Kind:    "ObservabilityPolicy",
+}
+
 var serviceMonitorGVK = schema.GroupVersionKind{
 	Group:   "monitoring.coreos.com",
 	Version: "v1",
@@ -1110,6 +1121,56 @@ func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deplo
 			}
 
 			return ctrl.SetControllerReference(bs, route, r.Scheme)
+		})
+		return err
+	})
+}
+
+// reconcileObservabilityPolicy creates an NGF ObservabilityPolicy targeting the
+// HTTPRoute managed for this BirService, enabling per-route OTel tracing on the
+// data plane. Disabled (deletes any existing policy) when TRACING_RATIO is 0,
+// the workload isn't exposed, or no hostname is resolvable.
+func (r *BirServiceReconciler) reconcileObservabilityPolicy(ctx context.Context, bs *deployv1alpha1.BirService) error {
+	routeName := fmt.Sprintf("%s-route", bs.Name)
+	policyName := fmt.Sprintf("%s-tracing", routeName)
+
+	if r.TracingRatio <= 0 || !exposeOrDefault(bs) || r.resolveHostname(bs) == "" {
+		existing := &unstructured.Unstructured{}
+		existing.SetGroupVersionKind(observabilityPolicyGVK)
+		err := r.Get(ctx, types.NamespacedName{Name: policyName, Namespace: bs.Namespace}, existing)
+		if err == nil {
+			return r.Delete(ctx, existing)
+		}
+		return client.IgnoreNotFound(err)
+	}
+
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		policy := &unstructured.Unstructured{}
+		policy.SetGroupVersionKind(observabilityPolicyGVK)
+		policy.SetName(policyName)
+		policy.SetNamespace(bs.Namespace)
+
+		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, policy, func() error {
+			policy.Object["spec"] = map[string]interface{}{
+				"targetRefs": []interface{}{
+					map[string]interface{}{
+						"group": "gateway.networking.k8s.io",
+						"kind":  "HTTPRoute",
+						"name":  routeName,
+					},
+				},
+				"tracing": map[string]interface{}{
+					"strategy": "ratio",
+					"ratio":    int64(r.TracingRatio),
+				},
+			}
+
+			policy.SetLabels(mergeStringMap(policy.GetLabels(), map[string]string{
+				"app.kubernetes.io/name":       bs.Name,
+				"app.kubernetes.io/managed-by": "easy-deploy-operator",
+			}))
+
+			return ctrl.SetControllerReference(bs, policy, r.Scheme)
 		})
 		return err
 	})
