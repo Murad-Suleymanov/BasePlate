@@ -129,6 +129,11 @@ rbac:
         apiGroups: ["gateway.networking.k8s.io"]
         resources: ["httproutes"]
         verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      gateways:
+        enabled: true
+        apiGroups: ["gateway.networking.k8s.io"]
+        resources: ["gateways"]
+        verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
       observabilitypolicies:
         enabled: true
         apiGroups: ["gateway.nginx.org"]

@@ -10,9 +10,12 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	deployv1alpha1 "easy-deploy/api/v1alpha1"
@@ -108,6 +111,109 @@ func (r *BirServiceReconciler) meshNeedsRolloutForSidecar(ctx context.Context, b
 	// pod-ların restart-a ehtiyacı yoxdur
 	_ = podList
 	return false, nil
+}
+
+// reconcileWaypointGateway ensures the namespace's Gateway/waypoint resource matches intent.
+// Created when at least one BirService in the namespace has spec.traffic (istio mesh intent);
+// deleted when no BirService needs it. Multiple BirServices in the same namespace share one
+// Gateway, so we count siblings before deleting. Istio spawns a waypoint Pod for the Gateway,
+// which handles L7 traffic and emits Zipkin trace spans.
+func (r *BirServiceReconciler) reconcileWaypointGateway(ctx context.Context, bs *deployv1alpha1.BirService) error {
+	desired := bsNeedsWaypoint(bs) && bs.DeletionTimestamp.IsZero()
+	if desired {
+		return r.upsertWaypointGateway(ctx, bs.Namespace)
+	}
+
+	siblingsNeed, err := r.anySiblingNeedsWaypoint(ctx, bs)
+	if err != nil {
+		return fmt.Errorf("list BirServices in %s: %w", bs.Namespace, err)
+	}
+	if siblingsNeed {
+		return nil
+	}
+	return r.deleteWaypointGateway(ctx, bs.Namespace)
+}
+
+// bsNeedsWaypoint returns true when this BirService's spec implies mesh intent
+// (spec.traffic set + provider empty or "istio").
+func bsNeedsWaypoint(bs *deployv1alpha1.BirService) bool {
+	if bs.Spec.Traffic == nil {
+		return false
+	}
+	prov := strings.ToLower(strings.TrimSpace(bs.Spec.Traffic.Provider))
+	return prov == "" || prov == "istio"
+}
+
+func (r *BirServiceReconciler) anySiblingNeedsWaypoint(ctx context.Context, bs *deployv1alpha1.BirService) (bool, error) {
+	var list deployv1alpha1.BirServiceList
+	if err := r.List(ctx, &list, client.InNamespace(bs.Namespace)); err != nil {
+		return false, err
+	}
+	for i := range list.Items {
+		sib := &list.Items[i]
+		if sib.UID == bs.UID {
+			continue
+		}
+		if !sib.DeletionTimestamp.IsZero() {
+			continue
+		}
+		if bsNeedsWaypoint(sib) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func waypointGatewayObject(namespace string) *unstructured.Unstructured {
+	gw := &unstructured.Unstructured{}
+	gw.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "gateway.networking.k8s.io",
+		Version: "v1",
+		Kind:    "Gateway",
+	})
+	gw.SetName(waypointName)
+	gw.SetNamespace(namespace)
+	return gw
+}
+
+func (r *BirServiceReconciler) upsertWaypointGateway(ctx context.Context, namespace string) error {
+	gw := waypointGatewayObject(namespace)
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, gw, func() error {
+		annotations := gw.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations["istio.io/waypoint-for"] = "service"
+		gw.SetAnnotations(annotations)
+		if err := unstructured.SetNestedField(gw.Object, "istio-waypoint", "spec", "gatewayClassName"); err != nil {
+			return err
+		}
+		listeners := []interface{}{
+			map[string]interface{}{
+				"name":     "mesh",
+				"port":     int64(15008),
+				"protocol": "HBONE",
+			},
+		}
+		return unstructured.SetNestedSlice(gw.Object, listeners, "spec", "listeners")
+	})
+	if err != nil {
+		return fmt.Errorf("upsert waypoint Gateway: %w", err)
+	}
+	log.FromContext(ctx).Info("waypoint Gateway upserted", "namespace", namespace)
+	return nil
+}
+
+func (r *BirServiceReconciler) deleteWaypointGateway(ctx context.Context, namespace string) error {
+	gw := waypointGatewayObject(namespace)
+	if err := r.Delete(ctx, gw); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("delete waypoint Gateway: %w", err)
+	}
+	log.FromContext(ctx).Info("waypoint Gateway deleted (no BirService needs it)", "namespace", namespace)
+	return nil
 }
 
 // rolloutRestartWorkload sets restartedAt on the app Deployment pod template (same as kubectl rollout restart).

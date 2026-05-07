@@ -110,8 +110,4 @@ spec:
   shutdown:
 {{ toYaml .Values.shutdown | nindent 4 }}
 {{- end }}
-{{- if .Values.tracing }}
-  tracing:
-{{ toYaml .Values.tracing | nindent 4 }}
-{{- end }}
 

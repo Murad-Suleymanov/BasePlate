@@ -123,6 +123,10 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
+	if err := r.reconcileWaypointGateway(ctx, bs); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	minReplicas, maxReplicas, useHPA := resolveHPAConfig(bs)
 	var replicas *int32
 	if !useHPA {
