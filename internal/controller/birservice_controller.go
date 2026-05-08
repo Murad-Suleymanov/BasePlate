@@ -170,7 +170,15 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 				dep.Spec.Replicas = replicas
 			}
 			dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
-			dep.Spec.Template.ObjectMeta.Labels = labels
+			// Pod template labels are a superset of selector labels (selector is immutable).
+			// In ambient mode the use-waypoint label must be on the pod, not just the service:
+			// gateways like NGF resolve Endpoints and connect to pod IPs, which bypasses the
+			// service-VIP waypoint binding. Pod-level label routes pod-IP traffic via waypoint too.
+			templateLabels := mergeStringMap(map[string]string{}, labels)
+			if bsNeedsWaypoint(bs) {
+				templateLabels[labelUseWaypoint] = waypointName
+			}
+			dep.Spec.Template.ObjectMeta.Labels = templateLabels
 			dep.Spec.Template.ObjectMeta.Annotations = r.tracingAnnotations(ctx, bs, dep.Spec.Template.ObjectMeta.Annotations)
 
 			// Image internal registry-dəndirsə, pull üçün registry-push secret lazımdır

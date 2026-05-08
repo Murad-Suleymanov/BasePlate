@@ -5,7 +5,7 @@ metadata:
   name: waypoint
   namespace: {{ .Release.Namespace | quote }}
   annotations:
-    istio.io/waypoint-for: service
+    istio.io/waypoint-for: all
 spec:
   gatewayClassName: istio-waypoint
   listeners:
