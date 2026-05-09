@@ -213,6 +213,7 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 						},
 					},
 				},
+				Env: tracingContainerEnv(bs, dep.Spec.Template.ObjectMeta.Annotations),
 			}
 
 			if bs.Spec.ReadinessProbe != nil {
@@ -786,6 +787,23 @@ func (r *BirServiceReconciler) tracingAnnotations(ctx context.Context, bs *deplo
 	out[fmt.Sprintf("instrumentation.opentelemetry.io/inject-%s", runtime)] = "observability/default"
 	out["instrumentation.opentelemetry.io/container-names"] = "app"
 	return out
+}
+
+// tracingContainerEnv returns runtime-specific env vars that the auto-instrumentation
+// SDK reads to capture custom ActivitySources/sources. The OTel Operator injects the
+// SDK + endpoint/propagator/sampler env, but custom source registration is per-runtime:
+// .NET requires OTEL_DOTNET_AUTO_TRACES_ADDITIONAL_SOURCES (no wildcard support in v1.x).
+// Convention: ActivitySource name == BirService name, so we inject bs.Name.
+// Returns nil when no inject-* annotation is present (auto-instrumentation skipped).
+func tracingContainerEnv(bs *deployv1alpha1.BirService, annotations map[string]string) []corev1.EnvVar {
+	var env []corev1.EnvVar
+	if _, ok := annotations["instrumentation.opentelemetry.io/inject-dotnet"]; ok {
+		env = append(env, corev1.EnvVar{
+			Name:  "OTEL_DOTNET_AUTO_TRACES_ADDITIONAL_SOURCES",
+			Value: bs.Name,
+		})
+	}
+	return env
 }
 
 // resolveTracingRuntime detects the OTel inject-* runtime from the image config
