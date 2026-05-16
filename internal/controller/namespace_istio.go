@@ -107,8 +107,8 @@ func (r *BirServiceReconciler) meshNeedsRolloutForSidecar(ctx context.Context, b
 	if err := r.List(ctx, podList, client.InNamespace(bs.Namespace), client.MatchingLabels{"app.kubernetes.io/name": bs.Name}); err != nil {
 		return false, err
 	}
-	// ambient mode-da sidecar yoxdur, ztunnel node-da işləyir
-	// pod-ların restart-a ehtiyacı yoxdur
+	// In ambient mode there are no sidecars — ztunnel runs node-wide,
+	// so pods don't need to be restarted when the namespace gets the label.
 	_ = podList
 	return false, nil
 }

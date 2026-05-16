@@ -4,7 +4,7 @@ on:
   push:
     branches: ["main"]
     paths-ignore:
-      # Bot bump-u yenidən build etməsin deyə
+      # Skip when only the bot's auto-bump commit changed the file (avoids a build loop).
       - "charts/easy-deploy-platform/values.yaml"
   workflow_dispatch: {}
 
@@ -15,7 +15,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # secrets konteksti step if:-də istifadə oluna bilmir; PAT şərti üçün env
+    # The `secrets` context can't be used in step-level `if:`, so expose the PAT via env for the gating condition.
     env:
       BASEPLATE_INFRA_TOKEN: ${{ secrets.BASEPLATE_INFRA_TOKEN }}
     steps:
@@ -50,7 +50,7 @@ jobs:
           tags: |
             ghcr.io/${{ env.OWNER_LC }}/easy-deploy-operator:main
             ghcr.io/${{ env.OWNER_LC }}/easy-deploy-operator:${{ github.sha }}
-          # Registry cache (ghcr) — GHA cache API bəzən "connection reset" verir
+          # Registry cache (ghcr) — the GHA cache API occasionally returns "connection reset".
           cache-from: type=registry,ref=ghcr.io/${{ env.OWNER_LC }}/easy-deploy-operator:buildcache
           cache-to: type=registry,ref=ghcr.io/${{ env.OWNER_LC }}/easy-deploy-operator:buildcache,mode=max
 

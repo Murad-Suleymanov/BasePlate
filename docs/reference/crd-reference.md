@@ -1,11 +1,11 @@
 # CRD Reference
 
-Complete specification of the `BirService` custom resource definition.
+Complete specification of the `BirService` custom resource. This is the contract the operator reconciles against; tenant `values.yaml` files are templated into a `BirService` CR by the `birservice` Helm chart.
 
 ## Overview
 
 | Property | Value |
-|----------|-------|
+|---|---|
 | **API Group** | `deploy.easydeploy.io` |
 | **Version** | `v1alpha1` |
 | **Kind** | `BirService` |
@@ -16,277 +16,242 @@ Complete specification of the `BirService` custom resource definition.
 ## Usage
 
 ```bash
-# List BirServices in a namespace
 kubectl -n dev get birservices
 kubectl -n dev get bs
-
-# Describe a specific BirService
 kubectl -n dev describe bs echo
-
-# Get BirService as YAML
 kubectl -n dev get bs echo -o yaml
+kubectl explain birservices.spec.singleton   # field-level docs
 ```
 
 ## Printer Columns
 
-When listing BirServices, `kubectl` displays these columns:
+| Column | JSON Path |
+|---|---|
+| Repo | `.spec.repo` |
+| Image | `.spec.image` |
+| Port | `.spec.port` |
+| Hostname | `.spec.hostname` |
+| Available | `.status.availableReplicas` |
+| Build | `.status.buildStatus` |
 
-| Column | JSON Path | Type |
-|--------|-----------|------|
-| Repo | `.spec.repo` | string |
-| Image | `.spec.image` | string |
-| Port | `.spec.port` | integer |
-| Hostname | `.spec.hostname` | string |
-| Available | `.status.availableReplicas` | integer |
-| Build | `.status.buildStatus` | string |
+## Spec — Top-Level Fields
 
-Example output:
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `image` | string | — | Pre-built image. Exclusive with `repo`. |
+| `repo` | string | — | Container repo or git URL. Exclusive with `image`. |
+| `tag` | string | repo default branch / `latest` | Git ref or image tag. |
+| `dockerfile` | string | `Dockerfile` | Path inside repo. |
+| `imageTag` | string | — | Rollback pin to a specific build SHA. |
+| `injectPipeline` | bool | `false` | Inject GH Actions build workflow into repo (GitHub only). |
+| `port` | int32 (1–65535) | auto-detect → 8080 | Service port. |
+| `containerPort` | int32 (1–65535) | same as `port` | Container port if different. |
+| `hostname` | string | `<name>-<ns>.<baseDomain>` | External DNS name. |
+| `expose` | bool | `true` | `false` = ClusterIP-only, no HTTPRoute/DNS. |
+| `replicas` | int32 (≥0) | `1` | Fixed count. Wins over HPA when set. |
+| `hpa` | object | — | `minReplicas` + `maxReplicas` (both required). |
+| `resources` | object | requests cpu=75m mem=200Mi; limits 2× | Container resource block. |
+| `readinessProbe` | object | TCP default | `path` (required) + `port`. |
+| `livenessProbe` | object | omitted | `path` (required) + `port`. |
+| `metrics` | bool / object | `true` (enabled at `/metrics`) | ServiceMonitor toggle. |
+| `traffic` | object | — | Presence enables Istio ambient mesh. |
+| `canary` | object | — | Weighted canary rollout. |
+| `singleton` | bool | `false` | Recreate strategy + no PDB. |
+| `maxDown` | int32 (≥0) | `floor(replicas/2)` | PDB `maxUnavailable` count. |
+| `shutdown` | object | preStop=15s, drain=5s | Graceful termination. |
 
-```
-NAME      REPO                                           IMAGE                       PORT   HOSTNAME                         AVAILABLE   BUILD
-echo                                                     ealen/echo-server:0.9.2            echo-dev.easysolution.work       1
-welcome   https://github.com/docker/welcome-to-docker                                3000   welcome-dev.easysolution.work    1           Succeeded
-```
+## Spec — Nested Objects
 
-## Spec
+### `spec.hpa`
 
 ```yaml
-apiVersion: deploy.easydeploy.io/v1alpha1
-kind: BirService
-metadata:
-  name: example
-  namespace: dev
-spec:
-  image: ""           # string, optional
-  repo: ""            # string, optional
-  tag: ""             # string, optional
-  dockerfile: ""      # string, optional
-  port: 0             # int32, optional (1–65535)
-  containerPort: 0    # int32, optional (1–65535)
-  replicas: 1         # int32, optional (≥0)
-  hostname: ""        # string, optional
+hpa:
+  minReplicas: 2     # int32, ≥1 enables HPA; both must be set
+  maxReplicas: 5     # int32, ≥1
 ```
 
-### `spec.image`
+Both fields required together to take effect. If `replicas` is set anywhere on the spec, HPA is *not* created (the lint warns).
 
-| Property | Value |
-|----------|-------|
-| Type | `string` |
-| Required | No (but one of `image` or `repo` must be set) |
-| Default | `""` |
+### `spec.resources`
 
-A fully-qualified container image reference.
+```yaml
+resources:
+  requests:
+    memory: "200Mi"
+    cpu: "75m"
+  limits:
+    memory: "400Mi"
+    cpu: "150m"
+```
 
-### `spec.repo`
+Defaults applied per field when omitted: requests `cpu=75m`, `memory=200Mi`; limits = 2× the *resolved* requests.
 
-| Property | Value |
-|----------|-------|
-| Type | `string` |
-| Required | No (but one of `image` or `repo` must be set) |
-| Default | `""` |
+### `spec.readinessProbe` / `spec.livenessProbe`
 
-Either a container image repository or a Git URL containing a Dockerfile. Git URLs are detected by prefix (`https://github.com/`, `https://gitlab.com/`, `https://bitbucket.org/`) or `.git` suffix.
+```yaml
+readinessProbe:
+  path: /healthz       # required
+  port: 8080           # optional, defaults to containerPort
+```
 
-### `spec.tag`
+When `readinessProbe` is omitted, the operator inserts a default TCP probe on `containerPort` (initialDelay=3s, period=5s, failureThreshold=3) so rolling updates are zero-downtime by default. HTTP probes (when declared) use initialDelay=5s, period=5s for readiness; 15s/10s for liveness.
 
-| Property | Value |
-|----------|-------|
-| Type | `string` |
-| Required | No |
-| Default | Repository default branch (Git) / `latest` (image) |
+### `spec.metrics`
 
-Git branch, tag, or commit reference. Only used when `repo` is a Git URL.
+Three accepted forms:
 
-### `spec.dockerfile`
+```yaml
+metrics: true                            # ServiceMonitor at /metrics
+metrics: false                           # no ServiceMonitor
+metrics:
+  enabled: true
+  path: /actuator/prometheus             # custom path
+```
 
-| Property | Value |
-|----------|-------|
-| Type | `string` |
-| Required | No |
-| Default | `Dockerfile` |
+### `spec.traffic`
 
-Path to the Dockerfile relative to the repository root. Only used when `repo` is a Git URL.
+Presence implies mesh intent (Istio ambient). The operator labels the namespace `istio.io/dataplane-mode=ambient`, ensures a waypoint Gateway, and creates DestinationRule + (optionally) EnvoyFilter.
 
-### `spec.port`
+```yaml
+traffic:
+  provider: istio                        # empty or "istio"
+  rateLimit:
+    enabled: true
+    mode: local                          # only "local" implemented
+    local:
+      requestsPerSecond: 100             # int32, ≥1
+      burst: 20                          # int32, ≥0
+  ejectUnhealthy: true                   # bool, default true
+  latencyAware: false                    # bool, default false (round-robin)
+```
 
-| Property | Value |
-|----------|-------|
-| Type | `int32` |
-| Required | No |
-| Default | Auto-detected from image, fallback `8080` |
-| Validation | 1–65535 |
+`ejectUnhealthy: true` (or omitted) creates a DestinationRule with platform outlier-detection defaults:
 
-The service port. Used for the Kubernetes Service and HTTPRoute backend reference.
+| Setting | Value |
+|---|---|
+| `consecutive5xxErrors` | 5 |
+| `interval` | 10s |
+| `baseEjectionTime` | 30s |
+| `maxEjectionPercent` | 50 |
 
-### `spec.containerPort`
+`latencyAware: true` sets `trafficPolicy.loadBalancer.simple = LEAST_REQUEST` in the DestinationRule. When omitted/false the field isn't set and Istio's default (ROUND_ROBIN) applies.
 
-| Property | Value |
-|----------|-------|
-| Type | `int32` |
-| Required | No |
-| Default | Same as `port` |
-| Validation | 1–65535 |
+### `spec.canary`
 
-The container port, if different from the service port.
+```yaml
+canary:
+  enabled: true                          # required
+  weight: 10                             # int32 (0–100), default 10
+  image: ""                              # full image URL; derived if empty
+  tag: ""                                # image tag override
+```
 
-### `spec.replicas`
+When enabled the operator:
 
-| Property | Value |
-|----------|-------|
-| Type | `int32` |
-| Required | No |
-| Default | `1` |
-| Validation | ≥ 0 |
+1. Sets `status.stableTag = status.buildTag` (locks the current stable version).
+2. Keeps the main Deployment on `stableTag` even when new builds arrive.
+3. Creates `<name>-canary` Deployment + Service running the canary image.
+4. Updates the HTTPRoute with two `backendRefs` weighted by `weight`.
 
-Number of pod replicas.
+Setting `enabled: false` (or removing `canary`) promotes: canary infrastructure is torn down, `stableTag` is cleared, the main Deployment picks up the latest build.
 
-### `spec.hostname`
+### `spec.shutdown`
 
-| Property | Value |
-|----------|-------|
-| Type | `string` |
-| Required | No |
-| Default | `<name>-<namespace>.<BASE_DOMAIN>` |
+```yaml
+shutdown:
+  preStopSleepSeconds: 15                # 0–600, default 15
+  drainBufferSeconds:  5                 # 0–600, default 5
+```
 
-Custom hostname for external access. Overrides the auto-generated hostname.
+`terminationGracePeriodSeconds` is auto-computed as the sum (default 20s). Increase `drainBufferSeconds` for long-running requests (uploads, streaming, batch jobs).
+
+### `spec.singleton`
+
+```yaml
+singleton: true                          # bool, default false
+```
+
+When `true`, the operator uses `Recreate` deployment strategy (all old pods stop, then new pods start — brief downtime). PDB is skipped (meaningless with one replica). `maxDown` is ignored. `replicas`/`hpa` are still honored but typically set to `1`.
+
+### `spec.maxDown`
+
+```yaml
+maxDown: 1                               # int32, ≥0
+```
+
+PodDisruptionBudget `maxUnavailable` count. Ignored when `singleton: true` or effective replicas < 2. Default `floor(N/2)` where `N` = `replicas` or `hpa.minReplicas`. The PDB is skipped entirely when `maxDown >= effective_replicas` (it would never block).
 
 ## Status
 
 ```yaml
 status:
-  availableReplicas: 1    # int32
-  buildImage: ""          # string
-  buildStatus: ""         # string: Building, Succeeded, Failed
-  buildTag: ""            # string
-  lastRebuild: ""         # string (unix timestamp)
+  availableReplicas: 3                   # int32 — from Deployment.status
+  buildImage: "registry.../app:abc1234"  # last build image URL
+  buildStatus: "Succeeded"               # Building | Succeeded | Failed
+  buildTag: "abc1234"                    # tag used in last build
+  lastRebuild: "1717804800"              # unix ts of last webhook rebuild
+  stableTag: "abc1234"                   # canary mode: locked stable tag
+  canaryImage: "registry.../app:v2-rc1"  # canary mode: display only
 ```
 
-### `status.availableReplicas`
+### Status fields
 
-Number of ready pods in the Deployment.
+| Field | Set By | Description |
+|---|---|---|
+| `availableReplicas` | reconciler | Mirror of `Deployment.status.availableReplicas`. |
+| `buildImage` | reconciler | Full image URL of the most recent build. |
+| `buildStatus` | reconciler | `Building`, `Succeeded`, or `Failed`. |
+| `buildTag` | reconciler | Tag for the most recent build (drives `needsRebuild`). |
+| `lastRebuild` | reconciler | Annotation timestamp consumed after rebuild. |
+| `stableTag` | reconciler (canary) | Locked stable tag while a canary is active. |
+| `canaryImage` | reconciler (canary) | Display-only canary image URL. |
 
-### `status.buildImage`
-
-Full image reference in the local registry (e.g., `registry.registry.svc.cluster.local:5000/welcome:latest`). Only set for Git-based builds.
-
-### `status.buildStatus`
-
-Current build state. One of:
-
-| Value | Description |
-|-------|-------------|
-| `Building` | Kaniko job is running |
-| `Succeeded` | Build completed successfully |
-| `Failed` | Build failed |
-
-### `status.buildTag`
-
-The tag used for the current/last build. Used to detect tag changes for rebuild triggers.
-
-### `status.lastRebuild`
-
-Unix timestamp of the last webhook-triggered rebuild. Compared against the `deploy.easydeploy.io/rebuild` annotation to detect new rebuild requests.
-
-## Full CRD YAML
-
-```yaml
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: birservices.deploy.easydeploy.io
-spec:
-  group: deploy.easydeploy.io
-  scope: Namespaced
-  names:
-    plural: birservices
-    singular: birservice
-    kind: BirService
-    shortNames:
-      - bs
-  versions:
-    - name: v1alpha1
-      served: true
-      storage: true
-      subresources:
-        status: {}
-      additionalPrinterColumns:
-        - name: Repo
-          type: string
-          jsonPath: .spec.repo
-        - name: Image
-          type: string
-          jsonPath: .spec.image
-        - name: Port
-          type: integer
-          jsonPath: .spec.port
-        - name: Hostname
-          type: string
-          jsonPath: .spec.hostname
-        - name: Available
-          type: integer
-          jsonPath: .status.availableReplicas
-        - name: Build
-          type: string
-          jsonPath: .status.buildStatus
-      schema:
-        openAPIV3Schema:
-          type: object
-          properties:
-            spec:
-              type: object
-              properties:
-                image:
-                  type: string
-                repo:
-                  type: string
-                tag:
-                  type: string
-                dockerfile:
-                  type: string
-                replicas:
-                  type: integer
-                  format: int32
-                  minimum: 0
-                port:
-                  type: integer
-                  format: int32
-                  minimum: 1
-                  maximum: 65535
-                containerPort:
-                  type: integer
-                  format: int32
-                  minimum: 1
-                  maximum: 65535
-                hostname:
-                  type: string
-            status:
-              type: object
-              properties:
-                availableReplicas:
-                  type: integer
-                  format: int32
-                buildImage:
-                  type: string
-                buildStatus:
-                  type: string
-                buildTag:
-                  type: string
-                lastRebuild:
-                  type: string
-```
-
-## Annotations
+## Annotations the Operator Watches
 
 | Annotation | Description | Set By |
-|-----------|-------------|--------|
-| `deploy.easydeploy.io/rebuild` | Unix timestamp — triggers a rebuild when changed | Webhook server |
+|---|---|---|
+| `deploy.easydeploy.io/rebuild` | Unix timestamp — triggers a rebuild when changed | webhook server |
 
-## Labels
+## Annotations the Operator Sets
+
+| Annotation | On | Purpose |
+|---|---|---|
+| `deploy.easydeploy.io/pipeline-injected` | BirService | Marks repo as having received the GitHub Actions workflow |
+| `deploy.easydeploy.io/mesh-rollout-generation` | Deployment | Avoids re-rollout for the same spec generation |
+| `instrumentation.opentelemetry.io/inject-<runtime>` | Pod template | Selects OTel auto-instrumentation SDK |
+
+## Labels the Operator Sets
 
 | Label | Description | Applied To |
-|-------|-------------|-----------|
+|---|---|---|
 | `app.kubernetes.io/name` | BirService name | All child resources |
 | `app.kubernetes.io/managed-by` | `easy-deploy-operator` | All child resources |
 | `deploy.easydeploy.io/tenant` | Namespace | All child resources |
-| `deploy.easydeploy.io/purpose` | `build` | Build jobs |
-| `deploy.easydeploy.io/build-tag` | Image tag | Build jobs |
+| `deploy.easydeploy.io/purpose` | `build` | Kaniko jobs |
+| `deploy.easydeploy.io/build-tag` | Image tag | Kaniko jobs |
+| `istio.io/use-waypoint` | `waypoint` | Service + Pod template when mesh-enabled |
+
+## Resources the Operator Creates
+
+For each `BirService` with `repo`/`image` set:
+
+| Resource | Naming | Created When |
+|---|---|---|
+| `Deployment` | `<name>-deploy` | always |
+| `Service` (ClusterIP) | `<name>-svc` | always |
+| `HTTPRoute` | `<name>-route` | `expose: true` and hostname resolvable |
+| `HorizontalPodAutoscaler` | `<name>-hpa` | `hpa.minReplicas`+`maxReplicas` set, `replicas` not set |
+| `PodDisruptionBudget` | `<name>-pdb` | effective replicas ≥ 2 and `singleton: false` |
+| `ServiceMonitor` | `<name>-monitor` | `metrics` enabled |
+| `DestinationRule` | `<name>-outlier` | `traffic:` present; merges outlier-detection + LB policy |
+| `EnvoyFilter` | `<name>-ratelimit` | `traffic.rateLimit.enabled: true` |
+| `ObservabilityPolicy` | `<name>-route-tracing` | tracing ratio > 0, exposed |
+| `Job` | `<name>-build-<tag>` | first build of a Git repo |
+| `Deployment` (canary) | `<name>-canary-deploy` | `canary.enabled: true` |
+| `Service` (canary) | `<name>-canary-svc` | `canary.enabled: true` |
+
+All resources are owned by the `BirService` CR via owner references → garbage collected when the CR is deleted. The waypoint `Gateway` is namespace-scoped and shared by all mesh-enabled BirServices in the namespace; it is deleted only when the last mesh-enabled sibling is removed.
+
+## Full Schema
+
+The authoritative schema lives in [`charts/easy-deploy-platform/values.yaml`](https://github.com/Murad-Suleymanov/BasePlate/blob/main/charts/easy-deploy-platform/values.yaml) under `crd.specProperties`. The operator chart renders it into the CRD's OpenAPI v3 schema, so `kubectl explain birservices.spec.<field>` returns the canonical description.

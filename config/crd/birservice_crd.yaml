@@ -60,7 +60,7 @@ spec:
                   type: string
                 imageTag:
                   type: string
-                  description: Rollback üçün əvvəlki SHA (məs. abc1234)
+                  description: Rollback override — previous build SHA (e.g. abc1234).
                 dockerfile:
                   type: string
                 injectPipeline:

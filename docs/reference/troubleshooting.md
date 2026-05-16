@@ -243,3 +243,90 @@ kubectl -n easy-deploy-system get events --sort-by=.lastTimestamp
 | `CrashLoopBackOff` | Missing CRD or RBAC | Ensure CRD is installed, check ClusterRole |
 | `ImagePullBackOff` | GHCR auth issue | Check image exists at `ghcr.io/murad-suleymanov/easy-deploy-operator:main` |
 | Pod not created | Namespace missing | `kubectl create ns easy-deploy-system` |
+| `is forbidden: User ... cannot create resource "X"` in operator logs | RBAC missing for a new resource type the operator now reconciles | Add the resource to `charts/easy-deploy-platform/values.yaml` under `rbac.clusterRole.rules`, push |
+
+---
+
+## Validation Failures
+
+See [Validation](../user-guide/validation.md) for the full feedback-loop architecture (IDE → pre-commit → PR CI → CRD).
+
+### `Additional property X is not allowed`
+
+```
+- traffic: Additional property ejectUnhelthy is not allowed
+```
+
+Typo. The schema rejects unknown fields. In VSCode, hit `Ctrl+Space` on the field name to see valid options. Common typos:
+
+| Typo | Correct |
+|---|---|
+| `ejectUnhelthy` | `ejectUnhealthy` |
+| `latancyAware` | `latencyAware` |
+| `singletton` | `singleton` |
+| `maxdown` | `maxDown` |
+| `replcias` | `replicas` |
+
+### `singleton: true + hpa.minReplicas: N — a singleton app cannot run multiple pods`
+
+You set both — they conflict. Pick one:
+
+- App needs autoscaling → remove `singleton: true`.
+- App must be exactly one pod (leader-elected, stateful) → remove the `hpa` block and let it use the default `replicas: 1`.
+
+### `image and repo are mutually exclusive`
+
+You set both `image:` and `repo:` at the top level. They are alternatives:
+
+- `image:` for pre-built images from any registry.
+- `repo:` for the platform to build from a Dockerfile in a Git repo.
+
+Drop whichever you don't need.
+
+### `resources.limits.memory < requests.memory`
+
+Self-explanatory; `kubectl apply` would also reject this. Fix the values so limits ≥ requests.
+
+### `Executable ... is not executable` in pre-commit / CI
+
+Pre-commit hook scripts in BasePlate lack the executable bit in the git index. Fix in BasePlate clone:
+
+```bash
+git update-index --chmod=+x scripts/birservice-lint.sh scripts/birservice-lint-multi.sh scripts/birservice-helm-validate.sh
+git commit -m "chore: mark scripts executable"
+git push
+```
+
+Pre-commit caches the hook repo per `rev` — pushing a new commit on `main` invalidates the cache automatically.
+
+### `helm: command not found` in pre-commit
+
+`birservice-helm-validate` requires Helm locally. Install from [helm.sh](https://helm.sh/docs/intro/install/) or skip the hook for a single commit:
+
+```bash
+SKIP=birservice-helm-validate git commit -m "..."
+```
+
+CI will still run it — the skip is local-only.
+
+### `mutable reference (main)` warning
+
+```
+[WARNING] The 'rev' field of repo '...' appears to be a mutable reference
+```
+
+`rev: main` in `.pre-commit-config.yaml` triggers this. It's informational; pre-commit clones the latest each time. Switch to a tag (`rev: v0.1.0`) once BasePlate cuts releases for full reproducibility.
+
+### PR `validate` check fails, no sticky comment
+
+Workflow lacks `pull-requests: write` permission. Confirm `validate.yml` includes:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+```
+
+### Branch protection: "Required status check 'validate' is missing"
+
+Branch protection requires checks that have never run. Trigger the workflow once on `main` (push a no-op commit or use `gh workflow run validate.yml -R Murad-Suleymanov/BasePlate-Dev`) so GitHub registers the check name, then re-apply the protection.

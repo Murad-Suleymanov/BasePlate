@@ -60,6 +60,18 @@ Within minutes, your app is live at `https://your-app-dev.easysolution.work` —
 
     Configure a GitHub webhook and the platform automatically rebuilds and redeploys when you push code.
 
+- :material-shield-check:{ .lg .middle } **Fast Feedback Validation**
+
+    ---
+
+    4-layer validation: IDE schema, pre-commit hooks, PR CI sticky comments, and CRD enforcement. Catches typos and bad combinations before they reach the cluster.
+
+- :material-graph:{ .lg .middle } **Built-in Service Mesh**
+
+    ---
+
+    Opt in with one `traffic:` block. Get outlier detection, rate limiting, load-balancer choice, and tracing — all platform-managed defaults, zero tuning.
+
 </div>
 
 ---

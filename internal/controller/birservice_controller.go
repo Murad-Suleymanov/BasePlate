@@ -165,7 +165,7 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, &dep, func() error {
 			dep.ObjectMeta.Labels = mergeStringMap(dep.ObjectMeta.Labels, labels)
 
-			// HPA varsa replicas təyin etmərik — HPA idarə edir
+			// When HPA is in charge, we don't set replicas — HPA owns it.
 			if replicas != nil {
 				dep.Spec.Replicas = replicas
 			}
@@ -181,7 +181,7 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 			dep.Spec.Template.ObjectMeta.Labels = templateLabels
 			dep.Spec.Template.ObjectMeta.Annotations = r.tracingAnnotations(ctx, bs, dep.Spec.Template.ObjectMeta.Annotations)
 
-			// Image internal registry-dəndirsə, pull üçün registry-push secret lazımdır
+			// If the image lives in our internal registry, mount the registry-push secret so pods can pull it.
 			templateSpec := &dep.Spec.Template.Spec
 			if strings.HasPrefix(image, r.effectiveRegistryURL()+"/") {
 				if r.ensureRegistryPushSecret(ctx, bs.Namespace) == nil {
@@ -1067,7 +1067,7 @@ func resolveContainerResources(bs *deployv1alpha1.BirService) (corev1.ResourceRe
 }
 
 func (r *BirServiceReconciler) reconcileHPA(ctx context.Context, bs *deployv1alpha1.BirService, depName string, labels map[string]string, minReplicas *int32, maxReplicas *int32) error {
-	// replicas verilibsə HPA yoxdur — prioritet replicas-dadır
+	// When spec.replicas is set, there is no HPA — replicas wins.
 	if bs.Spec.Replicas != nil {
 		hpa := &autoscalingv1.HorizontalPodAutoscaler{}
 		hpaName := fmt.Sprintf("%s-hpa", bs.Name)
@@ -1079,7 +1079,7 @@ func (r *BirServiceReconciler) reconcileHPA(ctx context.Context, bs *deployv1alp
 	}
 
 	if minReplicas == nil || maxReplicas == nil {
-		// HPA yoxdursa mövcud HPA-nı sil
+		// HPA was disabled — delete any existing HPA.
 		hpa := &autoscalingv1.HorizontalPodAutoscaler{}
 		hpaName := fmt.Sprintf("%s-hpa", bs.Name)
 		err := r.Get(ctx, types.NamespacedName{Name: hpaName, Namespace: bs.Namespace}, hpa)
@@ -1248,7 +1248,7 @@ func (r *BirServiceReconciler) reconcileObservabilityPolicy(ctx context.Context,
 }
 
 func (r *BirServiceReconciler) metricsEnabled(bs *deployv1alpha1.BirService) (bool, string) {
-	// Default true - metrik yığışdırma aktiv olur, explicit false ilə söndürülə bilər
+	// Default true — metrics scraping is on; an explicit false disables it.
 	if bs.Spec.Metrics != nil && !bs.Spec.Metrics.Enabled {
 		return false, ""
 	}

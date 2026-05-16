@@ -76,6 +76,7 @@ The **folder name** determines the service name. The **filename** (without `.yam
 | Guide | Description |
 |-------|-------------|
 | [YAML Reference](yaml-reference.md) | Complete list of all available fields |
+| [Validation](validation.md) | IDE feedback, pre-commit hooks, and PR CI for catching errors early |
 | [Deploying Images](deploying-images.md) | Deploy pre-built container images |
 | [Deploying from Git](deploying-from-git.md) | Build images from Git repositories |
 | [Rebuild Strategies](rebuild-strategies.md) | Tag-based and webhook-based rebuild triggers |

@@ -81,34 +81,49 @@ image: ealen/echo-server:0.9.2
 repo: https://github.com/docker/welcome-to-docker
 ```
 
-### All available fields
+### Available fields (short list)
 
 ```yaml
-# Image source (choose one)
-image: ""                    # Container image (e.g. nginx:latest)
-repo: ""                     # Git repo URL with Dockerfile
+# Image source (one of)
+image: ""                    # Pre-built image (e.g. nginx:latest)
+repo: ""                     # Git URL — platform builds with Kaniko
 
-# Build options (only for Git repos)
-tag: ""                      # Git branch/tag (default: repo's default branch)
-dockerfile: ""               # Path to Dockerfile (default: Dockerfile)
+# Build
+tag: ""                      # Git ref or image tag
+dockerfile: ""               # Path inside repo (default: Dockerfile)
+imageTag: ""                 # Rollback pin to a previous build SHA
 
-# Runtime options
-port: 0                      # Service port (auto-detected from image, fallback: 8080)
-containerPort: 0             # Container port if different from service port
-replicas: 1                  # Number of pod replicas
-hostname: ""                 # Custom hostname (default: <name>-<namespace>.easysolution.work)
+# Runtime
+port: 0                      # auto-detect → 8080
+containerPort: 0             # default: same as port
+hostname: ""                 # default: <name>-<namespace>.<baseDomain>
+expose: true                 # false = ClusterIP-only (no HTTPRoute/DNS)
 
-# Mesh (Istio): `traffic` + provider boş/istio => operator namespace-ə istio-injection=enabled qoyur.
-# Sidecar üçün: namespace label ilk dəfə enabled olanda və ya pod-larda istio-proxy yoxdursa (chart əvvəlcədən label verəndə də) avtomatik rollout.
+# Scaling
+replicas: 1                  # fixed count
+hpa: { minReplicas: 2, maxReplicas: 10 }   # autoscaling (alternative)
+singleton: false             # true → Recreate strategy, PDB skipped
+maxDown: 1                   # PDB maxUnavailable (default floor(replicas/2))
+
+# Resources / probes / shutdown / metrics — see docs/user-guide/yaml-reference.md
+resources: { requests: { memory: 200Mi, cpu: 75m }, limits: { memory: 400Mi, cpu: 150m } }
+readinessProbe: { path: /healthz }
+livenessProbe:  { path: /healthz }
+metrics: true                # ServiceMonitor at /metrics
+shutdown: { preStopSleepSeconds: 15, drainBufferSeconds: 5 }
+
+# Service mesh (Istio ambient) — presence enables mesh
 traffic:
-  provider: istio            # optional; empty = istio
-  rateLimit:
-    enabled: true
-    mode: local
-    local:
-      requestsPerSecond: 100
-      burst: 20
+  provider: istio
+  rateLimit: { enabled: true, mode: local, local: { requestsPerSecond: 100, burst: 20 } }
+  ejectUnhealthy: true       # outlier detection (default true)
+  latencyAware: false        # LB: false=round-robin, true=least-request
+
+# Canary rollout
+canary: { enabled: true, weight: 10, tag: v2.0.0-rc1 }
 ```
+
+Full field reference, defaults, and design notes: [docs/user-guide/yaml-reference.md](docs/user-guide/yaml-reference.md). API contract: [docs/reference/crd-reference.md](docs/reference/crd-reference.md).
 
 ### Auto-detection
 
@@ -133,65 +148,62 @@ The platform spans three Git repositories:
 | **[BasePlate-Dev](https://github.com/Murad-Suleymanov/BasePlate-Dev)** | Developer YAML files (`*/*.yaml` = `service_name/namespace_name.yaml`) |
 
 ```
-BasePlate/                              # Platform repo (this repo)
-├── api/v1alpha1/                       # BirService CRD Go types
-│   ├── birservice_types.go             #   Spec + Status definitions
-│   ├── groupversion_info.go            #   API group registration
-│   └── zz_generated.deepcopy.go        #   Generated deep copy methods
-├── cmd/
-│   ├── operator/main.go                # Operator entrypoint + webhook server
-│   └── easydeployctl/main.go           # CLI tool (YAML → BirService converter)
+BasePlate/                                   # Platform repo (this repo)
+├── api/v1alpha1/                            # BirService CRD Go types
+│   ├── birservice_types.go                  #   Spec + Status definitions
+│   ├── groupversion_info.go                 #   API group registration
+│   └── zz_generated.deepcopy.go             #   Generated deep copy
+├── cmd/operator/main.go                     # Operator entrypoint
 ├── internal/
-│   ├── controller/                     # Reconciliation logic
-│   │   ├── birservice_controller.go    #   Deployment, Service, HTTPRoute, Kaniko
-│   │   ├── envoyfilter_ratelimit.go    #   Istio EnvoyFilter (local rate limit)
-│   │   └── namespace_istio.go          #   Namespace istio-injection label
-│   ├── registry/                       # Registry v2 API client
-│   │   └── inspect.go                  #   Port auto-detection from image config
-│   └── webhook/                        # GitHub webhook handler
-│       └── github.go                   #   Push event → rebuild trigger
-├── charts/birservice/                  # Helm chart: simple YAML → BirService CR
-│   ├── Chart.yaml
-│   ├── values.yaml
-│   └── templates/birservice.yaml
-├── config/crd/                         # CRD source of truth
-│   └── birservice_crd.yaml
-├── manifests/                          # Operator manifests (synced by ArgoCD)
-│   ├── crd/birservice_crd.yaml         #   BirService CRD
-│   ├── operator/                       #   Operator Deployment, RBAC
-│   └── kustomization.yaml
-├── Dockerfile                          # Multi-stage: Go builder → distroless
-├── .github/workflows/
-│   └── operator-image.yml              # CI: build + push operator image to GHCR
-└── go.mod / go.sum                     # Go dependencies
+│   ├── controller/                          # Reconciliation logic
+│   │   ├── birservice_controller.go         #   Deployment, Service, HTTPRoute, HPA, PDB, ServiceMonitor, Kaniko
+│   │   ├── canary.go                        #   Canary deployment + weighted HTTPRoute
+│   │   ├── destinationrule_outlier.go       #   Istio DestinationRule (outlier + LB)
+│   │   ├── envoyfilter_ratelimit.go         #   Istio EnvoyFilter (local rate limit)
+│   │   ├── namespace_istio.go               #   Ambient mesh labels + waypoint Gateway
+│   │   └── metrics.go                       #   Controller-level Prometheus metrics
+│   ├── credentials/                         # Resolves GitHub PAT + registry creds
+│   ├── injector/                            # Auto-inject GH Actions build workflow into tenant repos
+│   ├── registry/                            # Registry v2 client (image inspect, port detect, runtime detect)
+│   └── webhook/                             # GitHub webhook → rebuild trigger
+├── charts/
+│   ├── birservice/                          # Tenant chart: values.yaml → BirService CR
+│   │   ├── Chart.yaml
+│   │   ├── values.yaml
+│   │   ├── values.schema.json               #   JSON schema: Helm + IDE + pre-commit
+│   │   └── templates/{birservice,namespace,waypoint}.yaml
+│   └── easy-deploy-platform/                # Operator chart (RBAC, Deployment, CRD)
+│       ├── values.yaml                      #   crd.specProperties = OpenAPI schema
+│       └── templates/{crd,deployment,rbac,webhook,...}.yaml
+├── config/crd/                              # Reference CRD YAML (single-doc form)
+├── scripts/
+│   ├── birservice-lint.sh                   # Semantic cross-field rules
+│   ├── birservice-lint-multi.sh             # Pre-commit wrapper (multi-file)
+│   └── birservice-helm-validate.sh          # helm template + line-annotated errors
+├── .pre-commit-hooks.yaml                   # Hook definitions consumed by tenant repos
+├── docs/                                    # mkdocs material site
+│   ├── user-guide/{yaml-reference,validation,...}.md
+│   ├── reference/{crd-reference,troubleshooting,...}.md
+│   └── architecture/{operator,networking,build-pipeline}.md
+├── Dockerfile
+└── .github/workflows/operator-image.yml     # Build + push operator image; bump chart values in Infra
 
-BasePlate-Infra/                        # Infrastructure repo
-├── argocd/                             # ArgoCD Application definitions
-│   ├── application-platform.yaml       #   CRD + Operator (→ BasePlate)
-│   ├── application-infra.yaml          #   Gateway, Registry, Webhook (→ this repo)
-│   ├── applicationset-birservices.yaml #   Auto-discover developer YAMLs
-│   ├── application-gateway.yaml        #   NGINX Gateway Fabric (Helm)
-│   ├── application-cert-manager.yaml   #   cert-manager (Helm)
-│   ├── application-monitoring.yaml     #   Prometheus + Grafana (Helm)
-│   └── application-external-dns.yaml   #   ExternalDNS (Helm)
-├── manifests/                          # Infra manifests (synced by ArgoCD)
-│   ├── gateway/                        #   NGINX Gateway, TLS, ClusterIssuers
-│   ├── registry/                       #   Local container registry
-│   ├── operator/                       #   Webhook Service + HTTPRoute
-│   └── kustomization.yaml
-├── install-gateway-api-crds.sh         # One-time: install Gateway API CRDs
-├── install-kube-prometheus-crds.sh     # One-time: install Prometheus CRDs
-└── verify-kube-prometheus-stack.sh     # Verify monitoring stack health
+BasePlate-Infra/                             # Infrastructure repo
+├── dev/  prod/                               # Per-env ArgoCD AppSets + platform values
+│   ├── applicationsets/                     #   AppSet definitions
+│   ├── platform/values/                     #   easy-deploy-platform-values.yaml (image pinned by CI)
+│   └── infra-applications-values.yaml
+├── argocd/  cert-manager/  istio*/  nginx-gateway-fabric/  ...
+└── install-*.sh                             # Bootstrap scripts
 
-BasePlate-Dev/                          # Developer catalog repo
-├── echo/                               # service_name = folder
-│   ├── dev.yaml                        # namespace = filename
-│   └── prod.yaml
-├── api/
-│   ├── dev.yaml
-│   └── stage.yaml
-└── welcome/
-    └── dev.yaml                        # repo: https://github.com/docker/welcome-to-docker
+BasePlate-Dev/                               # Tenant values catalog
+├── .vscode/settings.json                    # Maps */dev.yaml + */prod.yaml to chart schema
+├── .pre-commit-config.yaml                  # References BasePlate hooks
+├── .github/workflows/validate.yml           # CI: pre-commit + sticky PR comment on failure
+├── hello-csharp/{dev,prod}.yaml
+├── hello-nodejs/{dev,prod}.yaml
+├── hello-python/{dev,prod}.yaml
+└── hello-websocket/prod.yaml
 ```
 
 ---
@@ -207,6 +219,21 @@ BasePlate-Dev/                          # Developer catalog repo
 | **Local Registry** | `registry` | In-cluster Docker registry for Kaniko-built images (NodePort 30500) |
 | **ArgoCD** | `argocd` | GitOps engine: syncs all platform and developer manifests |
 | **Prometheus + Grafana** | `monitoring` | Cluster monitoring and dashboards |
+
+---
+
+## Validation pipeline
+
+Tenant YAML is validated in four layers, fastest-first:
+
+| Layer | Where | Catches |
+|---|---|---|
+| 1. IDE | VSCode reads `charts/birservice/values.schema.json` via `.vscode/settings.json` in BasePlate-Dev | Typos, wrong types, range violations — real-time underline |
+| 2. Pre-commit | `pip install pre-commit && pre-commit install` in BasePlate-Dev | Schema + semantic rules before `git push` |
+| 3. PR CI | `.github/workflows/validate.yml` runs `pre-commit run` | Same checks, sticky PR comment with line-anchored errors |
+| 4. K8s API server | CRD OpenAPI schema | Last gate on `kubectl apply` |
+
+Branch protection on `BasePlate-Dev/main` requires the `validate` check, so even GitHub web-editor edits are forced through a PR. Full architecture: [docs/user-guide/validation.md](docs/user-guide/validation.md).
 
 ---
 

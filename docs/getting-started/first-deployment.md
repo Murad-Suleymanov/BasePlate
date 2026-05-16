@@ -121,3 +121,4 @@ See the [Troubleshooting](../reference/troubleshooting.md) guide for more detail
 
 - [Rebuild Strategies](../user-guide/rebuild-strategies.md) — Tag-based and webhook-based rebuilds
 - [Port Auto-Detection](../user-guide/auto-detection.md) — How the platform finds your app's port
+- [Validation](../user-guide/validation.md) — Catch YAML errors before they reach the cluster

@@ -87,3 +87,4 @@ Result: **https://nginx-dev.easysolution.work**
 
 - [Deploy from a Git Repository](first-deployment.md) — Let the platform build your Docker image
 - [YAML Reference](../user-guide/yaml-reference.md) — All available configuration fields
+- [Validation](../user-guide/validation.md) — IDE feedback, pre-commit hooks, and PR CI for catching errors early

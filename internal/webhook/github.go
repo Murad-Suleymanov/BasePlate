@@ -155,8 +155,8 @@ func (h *BuildCompleteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	image := registryURL + "/" + payload.Service + ":" + payload.Tag
 	l.Info("build complete, deploying", "deployment", depName, "namespace", payload.Namespace, "image", image)
 
-	// BirService status-u əvvəl yenilə — controller reconcile edib deployment yaradacaq.
-	// Bu ilk build-də deployment hələ mövcud olmadıqda da işləyir.
+	// Update the BirService status first — the controller will reconcile and create
+	// the deployment. This still works on the first build before any deployment exists.
 	bs := &deployv1alpha1.BirService{}
 	if err := h.Client.Get(ctx, types.NamespacedName{Name: payload.Service, Namespace: payload.Namespace}, bs); err == nil {
 		bs.Status.BuildTag = payload.Tag
@@ -165,7 +165,7 @@ func (h *BuildCompleteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		_ = h.Client.Status().Update(ctx, bs)
 	}
 
-	// Mövcud deployment varsa birbaşa patch et (daha sürətli rollout).
+	// If a deployment already exists, patch it directly for a faster rollout.
 	jsonPatch := []byte(`[{"op":"replace","path":"/spec/template/spec/containers/0/image","value":"` + image + `"}]`)
 	dep := &appsv1.Deployment{}
 	dep.Name = depName

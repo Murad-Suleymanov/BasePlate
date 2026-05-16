@@ -76,7 +76,7 @@ spec:
 {{- if ne (default true .Values.expose) true }}
   expose: false
 {{- end }}
-{{- /* Metrics default true - hər komponent metrik yığır; metrics: false ilə söndürülür */}}
+{{- /* Metrics default true — every component is scraped; set `metrics: false` to disable. */}}
 {{- if or (and (eq (kindOf .Values.metrics) "bool") .Values.metrics) (and (eq (kindOf .Values.metrics) "map") (ne false .Values.metrics.enabled)) }}
   metrics:
     enabled: true

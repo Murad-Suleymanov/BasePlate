@@ -4,35 +4,38 @@ image: ""
 repo: ""
 tag: ""
 dockerfile: ""
-# imageTag: "abc1234"  # rollback üçün — əvvəlki SHA
+# imageTag: "abc1234"  # rollback override — previous build SHA
 
 port: 0
 containerPort: 0
-# replicas: sabit pod sayı. Yazılmasa və HPA yoxdursa default 1.
-# replicas yazılıbsa HPA yaradılmır (replicas prioritetlidir).
+# replicas: fixed pod count. If omitted and HPA is not set, default is 1.
+# If replicas is set, HPA is NOT created (replicas wins).
 hpa:
-  # minReplicas + maxReplicas: HPA üçün (replicas yazılmayanda).
+  # minReplicas + maxReplicas: HPA (alternative to replicas).
   minReplicas: 0
   maxReplicas: 0
 resources:
   requests:
-    # Yazılmasa default: memory=200Mi, cpu=75m
+    # Defaults when omitted: memory=200Mi, cpu=75m
     memory: ""
     cpu: ""
   limits:
-    # Yazılmasa default: requests-in 2 qatı
+    # Defaults when omitted: 2× requests
     memory: ""
     cpu: ""
 hostname: ""
 
-# expose: true = HTTPRoute + DNS (default), false = daxili ClusterIP.
+# expose: true = HTTPRoute + DNS (default), false = internal ClusterIP only.
 expose: true
 
-# Metrics: default true - hər komponent metrik yığır. false = söndür. Or { enabled: true, path: /actuator/prometheus }
+# metrics: default true = ServiceMonitor at /metrics. false = disabled.
+# Object form: { enabled: true, path: /actuator/prometheus }
 metrics: true
 
-# Mesh (Istio): traffic + provider boş/istio — injection məcburi (istio-injection=enabled).
-# Mesh istəmirsənsə traffic yazma.
+# Mesh (Istio ambient): presence of `traffic:` implies mesh intent.
+# Provider empty or "istio" triggers the operator to label the namespace
+# and ensure a waypoint Gateway. Omit the whole `traffic` block to stay
+# out of the mesh.
 # traffic: {}
 # traffic:
 #   provider: istio
@@ -42,44 +45,53 @@ metrics: true
 #     local:
 #       requestsPerSecond: 100
 #       burst: 20
-# traffic: yazılmasa mesh idarəsi yoxdur; minimal mesh üçün: traffic: {}
+# For a minimal mesh opt-in with no extras: traffic: {}
 #
-# ejectUnhealthy: failing pod-ları müvəqqəti load balancer-dan çıxar (Istio outlier
-# detection). Mesh aktiv olanda default true (5 ardıcıl 5xx → 30s eject, maks 50% pod).
-# Yalnız 5xx qaytaran workload-lar üçün söndür (webhook, batch endpoint və s.):
+# ejectUnhealthy: Istio outlier detection — temporarily removes failing pods
+# from the load-balancing pool. Default true when mesh is enabled
+# (5 consecutive 5xx → 30s eject, max 50% of pods).
+# Set false for workloads that legitimately return 5xx (webhook receivers,
+# batch endpoints with retries):
 # traffic:
 #   ejectUnhealthy: false
 #
-# latencyAware: LB algoritmi.
-# false (default) → round-robin: hər pod-a növbə ilə bərabər yük gedir. Latency stabil
-#   olan stateless API-lər üçün doğru seçim.
-# true → least-request: yeni request hansı pod-da ən az aktiv request varsa ora gedir.
-#   Yalnız request latency-si HETEROGEN olanda faydalıdır (məs. bəzi endpoint cache hit,
-#   bəzi endpoint DB miss). Qərardan əvvəl Grafana-da P50/P99 histogram-a bax —
-#   nisbəti > 5x olanda least-request adətən fayda verir.
+# latencyAware: load-balancer algorithm.
+# false (default) → round-robin: every pod gets traffic in order. Correct for
+#   stateless APIs with uniform request latency.
+# true → least-request: each new request goes to the pod with the fewest
+#   in-flight requests. Useful only when request latency is HETEROGENEOUS
+#   (some endpoints hit cache, others hit DB). Verify P50/P99 histograms
+#   in Grafana first — least-request usually helps when the ratio is > 5×.
 # traffic:
 #   latencyAware: true
 
-# singleton: app eyni anda yalnız bir versiya işlədə bilərmi?
-# Default false → zero-downtime rolling deploy (yeni pod ayağa qalxır, sonra köhnə ölür).
-# true → köhnə pod-lar tam dayanır, sonra yeniləri başlayır (qısa downtime qəbul olunur).
-# Yalnız o zaman true et ki, app həqiqətən exclusive resource tutur:
-# leader-elected job, in-memory state olan worker, DB-yə exclusive lock tutan migration runner.
+# singleton: can the app run two versions concurrently?
+# Default false → zero-downtime rolling deploy (new pod comes up Ready,
+# then the old one terminates).
+# true → all old pods stop fully before new ones start (brief downtime).
+# Use only when the app genuinely holds an exclusive resource:
+# leader-elected job, worker with in-memory state, migration runner with
+# an exclusive DB lock.
 # singleton: true
 
-# maxDown: node drain / cluster upgrade zamanı eyni anda maks neçə pod düşə bilər.
-# Yazılmasa default replikaların yarısı (məs. replicas=4 → 2 pod düşə bilər).
-# Latency-critical app üçün azalt: maxDown: 1 (yalnız 1 pod itki, yerdə qalanlar yükü daşıyır).
-# Worker queue / eventually-consistent üçün artır.
-# Ehtiyatlı ol: maxDown: 0 — heç bir voluntary disruption olmasın (node drain blok olur, cluster upgrade çətinləşir).
+# maxDown: max pods that may go down simultaneously during voluntary
+# disruptions (node drains, cluster upgrades, autoscaler removing nodes).
+# Default: half the replicas (e.g. replicas=4 → 2 may go down).
+# Lower for latency-critical apps: maxDown: 1 (only one pod lost at a time).
+# Raise for eventually-consistent worker queues.
+# Caution: maxDown: 0 forbids any voluntary disruption — node drains will
+# block until pods reschedule, cluster upgrades become painful.
 # maxDown: 1
 
-# shutdown: graceful termination konfiqurasiyası.
-# preStopSleepSeconds — SIGTERM-dən əvvəl saniyə (endpoint drain). Default 15.
-# drainBufferSeconds — SIGTERM-dən sonra in-flight request-lər üçün vaxt. Default 5.
-# terminationGracePeriodSeconds avtomatik = preStopSleepSeconds + drainBufferSeconds.
-# Default kombinasiya: 15 + 5 = 20s grace.
-# Uzun upload/streaming/batch üçün drainBufferSeconds-ı artır.
+# shutdown: graceful termination tuning.
+# preStopSleepSeconds — seconds the container sleeps in preStop before
+# receiving SIGTERM (endpoint drain). Default 15.
+# drainBufferSeconds — post-SIGTERM budget for in-flight requests to
+# finish before SIGKILL. Default 5.
+# terminationGracePeriodSeconds is computed automatically as
+# preStopSleepSeconds + drainBufferSeconds.
+# Default combo: 15 + 5 = 20s grace.
+# Increase drainBufferSeconds for long uploads, streaming, or batch work.
 # shutdown:
 #   preStopSleepSeconds: 30
 #   drainBufferSeconds: 60

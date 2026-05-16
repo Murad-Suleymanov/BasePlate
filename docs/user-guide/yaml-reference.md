@@ -1,6 +1,6 @@
 # YAML Reference
 
-This is the complete reference for the developer YAML format used by BasePlate.
+Complete reference for the developer-facing tenant `values.yaml` that produces a `BirService` custom resource.
 
 ## File Location
 
@@ -10,6 +10,18 @@ BasePlate-Dev/<service_name>/<namespace_name>.yaml
 
 - `<service_name>` — the service name (folder name)
 - `<namespace_name>` — the Kubernetes namespace (filename without `.yaml`, e.g., `dev`, `prod`, `stage`)
+
+## Editor Setup
+
+The chart ships a JSON schema (`charts/birservice/values.schema.json`) and a workspace VSCode binding so any `*/dev.yaml` / `*/prod.yaml` opened from BasePlate-Dev gets real-time validation:
+
+- Unknown fields are flagged immediately (catches typos like `ejectUnhelthy`).
+- Type mismatches (e.g., `replicas: "3"` as string) underline the line.
+- `Ctrl+Space` autocompletes valid field names and shows the description.
+
+If you clone BasePlate-Dev without a sibling BasePlate checkout, the relative schema path fails — switch `.vscode/settings.json` to the GitHub raw URL (commented in that file).
+
+See [Validation](validation.md) for the full feedback loop (IDE → pre-commit → PR CI).
 
 ## Minimal Examples
 
@@ -25,11 +37,22 @@ BasePlate-Dev/<service_name>/<namespace_name>.yaml
     repo: https://github.com/docker/welcome-to-docker
     ```
 
+=== "Full mesh-enabled"
+
+    ```yaml
+    repo: https://github.com/your-org/api
+    hpa:
+      minReplicas: 2
+      maxReplicas: 5
+    traffic:
+      provider: istio
+    ```
+
 ## All Fields
 
 ```yaml
 # ┌─────────────────────────────────────────────────┐
-# │ Image Source (specify one)                       │
+# │ Image source (specify ONE of image / repo)      │
 # └─────────────────────────────────────────────────┘
 
 # Pre-built container image from any registry
@@ -38,156 +61,199 @@ image: ""
 # Git repository URL containing a Dockerfile
 repo: ""
 
-# ┌─────────────────────────────────────────────────┐
-# │ Build Options (only used with repo:)             │
-# └─────────────────────────────────────────────────┘
-
-# Git branch, tag, or commit to build
+# Git branch, tag, or commit to build (only with repo)
 # Default: repository's default branch
 tag: ""
 
-# Path to Dockerfile relative to repo root
+# Path to Dockerfile relative to repo root (only with repo)
 # Default: "Dockerfile"
 dockerfile: ""
 
-# Add GitHub Actions build workflow to the repo (GitHub only)
-# Requires GITHUB_TOKEN configured in platform. Pipeline pushes to registry on every push.
+# Rollback override — previous build SHA (e.g. "abc1234").
+# When set, deploys this exact image instead of the latest build.
+imageTag: ""
+
+# When true and repo is a GitHub URL, the platform adds a GitHub Actions
+# build workflow into the repo. Requires the platform GitHub PAT.
 injectPipeline: false
 
 # ┌─────────────────────────────────────────────────┐
-# │ Runtime Options                                  │
+# │ Runtime                                         │
 # └─────────────────────────────────────────────────┘
 
-# Port the application listens on
-# Default: auto-detected from image, fallback 8080
+# Port the application listens on.
+# 0 / omitted = auto-detect from image, fallback 8080.
 port: 0
 
-# Container port if different from service port
-# Default: same as port
+# Container port if different from service port. 0 = same as port.
 containerPort: 0
 
-# Number of pod replicas
-# Default: 1
+# Custom DNS hostname. Empty = <name>-<namespace>.<baseDomain>.
+hostname: ""
+
+# Expose externally via HTTPRoute + DNS. false = internal ClusterIP only.
+expose: true
+
+# ┌─────────────────────────────────────────────────┐
+# │ Scaling                                         │
+# └─────────────────────────────────────────────────┘
+
+# Fixed pod count. Default 1 if HPA is not set.
+# When set, HPA is NOT created (replicas wins).
 replicas: 1
 
-# HPA config (used when `replicas` is not set)
+# Horizontal Pod Autoscaler. Both fields required together.
 hpa:
   minReplicas: 2
   maxReplicas: 5
 
-# Container resources
+# App can only run one version at a time (leader-elected, exclusive lock,
+# in-memory state). Default false → zero-downtime rolling deploy.
+# true → old pods fully stop before new ones start (brief downtime),
+# PDB skipped, replicas/HPA still honored but typically set to 1.
+singleton: false
+
+# Maximum pods that may go down simultaneously during voluntary disruptions
+# (node drains, cluster upgrades, autoscaler removing nodes).
+# Default floor(replicas/2). Lower it for latency-critical apps; 0 forbids
+# voluntary disruption (blocks node drains). Ignored when singleton: true.
+maxDown: 1
+
+# ┌─────────────────────────────────────────────────┐
+# │ Resources                                       │
+# └─────────────────────────────────────────────────┘
+
 resources:
   requests:
     memory: 200Mi   # default
     cpu: 75m        # default
   limits:
-    memory: 400Mi   # default: 2x requests
-    cpu: 150m       # default: 2x requests
+    memory: 400Mi   # default: 2× requests
+    cpu: 150m       # default: 2× requests
 
-# Custom hostname for external access
-# Default: <name>-<namespace>.easysolution.work
-hostname: ""
+# ┌─────────────────────────────────────────────────┐
+# │ Health probes                                   │
+# └─────────────────────────────────────────────────┘
+
+# HTTP readiness probe. Without this, a default TCP probe is used.
+readinessProbe:
+  path: /healthz
+  port: 8080         # defaults to containerPort
+
+# HTTP liveness probe. Omit to disable.
+livenessProbe:
+  path: /healthz
+  port: 8080
+
+# ┌─────────────────────────────────────────────────┐
+# │ Observability                                   │
+# └─────────────────────────────────────────────────┘
+
+# Prometheus ServiceMonitor. Defaults: enabled at /metrics.
+# Object form: { enabled: true, path: /actuator/prometheus }
+metrics: true
+
+# Graceful termination. preStop drains endpoints; total grace =
+# preStopSleepSeconds + drainBufferSeconds.
+shutdown:
+  preStopSleepSeconds: 15
+  drainBufferSeconds: 5
+
+# ┌─────────────────────────────────────────────────┐
+# │ Service mesh (Istio ambient)                    │
+# │ Presence of `traffic:` implies mesh intent      │
+# └─────────────────────────────────────────────────┘
+
+traffic:
+  provider: istio                # empty or istio
+  rateLimit:
+    enabled: true                # Envoy local rate limit
+    mode: local
+    local:
+      requestsPerSecond: 100
+      burst: 20
+  # Outlier detection: failing pods temporarily removed from LB pool.
+  # Default true (5 consecutive 5xx → 30s eject, max 50% of pods).
+  # Set false for apps that legitimately return 5xx (webhooks, batch).
+  ejectUnhealthy: true
+  # Load balancer. Default false → round-robin.
+  # true → least-request (good for heterogeneous request latency).
+  latencyAware: false
+
+# ┌─────────────────────────────────────────────────┐
+# │ Canary rollout                                  │
+# └─────────────────────────────────────────────────┘
+
+canary:
+  enabled: true
+  weight: 10          # % of traffic to canary (0–100), default 10
+  image: ""           # override; if empty, derived from spec.image/repo
+  tag: ""             # canary image tag override
 ```
 
 ## Field Details
 
-### `image`
+### Image source
 
-A fully-qualified container image reference. Used when deploying pre-built images.
+#### `image`
+
+Fully-qualified container image reference. Mutually exclusive with `repo` — the semantic lint catches that.
 
 ```yaml
 image: nginx:alpine
-image: ealen/echo-server:0.9.2
 image: ghcr.io/your-org/your-app:v1.0.0
 ```
 
-!!! note
-    `image` and `repo` are mutually exclusive. If both are set, `image` takes precedence.
+#### `repo`
 
-### `repo`
+Git repository URL. Supported prefixes: `https://github.com/`, `https://gitlab.com/`, `https://bitbucket.org/`, or any URL ending in `.git`. The platform clones, builds with Kaniko, pushes to the internal registry.
 
-A Git repository URL. When this is a recognized Git hosting URL (GitHub, GitLab, Bitbucket), the platform clones the repository, builds the Dockerfile with Kaniko, and pushes the image to the local registry.
+#### `tag`
 
-```yaml
-repo: https://github.com/your-org/your-app
-repo: https://gitlab.com/your-org/your-app
-repo: https://bitbucket.org/your-org/your-app
-```
+Git branch, tag, or commit ref for the build. Default: repository's default branch. Changing it triggers a rebuild — see [Rebuild Strategies](rebuild-strategies.md).
 
-Supported URL patterns:
+#### `dockerfile`
 
-- `https://github.com/*`
-- `https://gitlab.com/*`
-- `https://bitbucket.org/*`
-- Any URL ending in `.git`
+Path to the Dockerfile relative to repo root. Useful for monorepos. Default `Dockerfile`.
 
-### `tag`
+#### `imageTag`
 
-The Git branch, tag, or commit to build. Only used when `repo` is a Git URL.
+Pin the deployed image to a previous successful build SHA — used for rollback. Example:
 
 ```yaml
-repo: https://github.com/your-org/your-app
-tag: v2.0.0      # Build from a Git tag
-tag: develop      # Build from a branch
-tag: abc123f      # Build from a commit
+repo: https://github.com/your-org/api
+imageTag: a1b2c3d4   # previous good build
 ```
 
-If omitted, Kaniko uses the repository's default branch.
+When set, the operator ignores the latest pipeline build and serves this tag.
 
-!!! tip "Triggering Rebuilds"
-    Changing `tag` triggers a new build. See [Rebuild Strategies](rebuild-strategies.md).
+#### `injectPipeline`
 
-### `injectPipeline`
+When `true` and `repo` is a GitHub URL, the operator adds `.github/workflows/easy-deploy.yml` to the tenant repo (one-time). Requires `github-pipeline-secret` configured platform-side.
 
-When `true` and `repo` is a GitHub URL, the platform adds a GitHub Actions workflow to the repository. Requires `github-pipeline-secret` (one-time setup).
+### Runtime
 
-### `dockerfile`
+#### `port` / `containerPort`
 
-Path to the Dockerfile relative to the repository root. Useful for monorepos.
+Service port the platform exposes. `containerPort` only matters when the container listens on a different port than the service should expose externally. Both can be `0` or omitted — the operator auto-detects from the image (`EXPOSE`, `ENV PORT`, `CMD --port`). See [Port Auto-Detection](auto-detection.md). Fallback: `8080`.
 
-```yaml
-repo: https://github.com/your-org/monorepo
-dockerfile: services/api/Dockerfile
-```
+#### `hostname`
 
-Default: `Dockerfile`
+Custom external DNS name. Default: `<name>-<namespace>.<BASE_DOMAIN>` (e.g. `api-prod.easysolution.work`). If you set a custom hostname, you must configure DNS for that domain yourself — ExternalDNS only manages the platform's zone.
 
-### `port`
+#### `expose`
 
-The port your application listens on. This is used for both the Kubernetes Service and the HTTPRoute backend.
+`true` (default) creates an HTTPRoute + DNS entry. `false` keeps the service ClusterIP-only — useful for internal services consumed by other workloads.
 
-```yaml
-port: 3000
-```
+### Scaling
 
-If omitted, the platform tries to auto-detect the port from the image. See [Port Auto-Detection](auto-detection.md).
+#### `replicas`
 
-Fallback: `8080`
+Fixed pod count. Default `1`. When set, HPA is not created.
 
-### `containerPort`
+#### `hpa`
 
-The container port, if different from the service port. This is an advanced option for cases where you want the Service to expose a different port than what the container listens on.
-
-```yaml
-port: 80              # Service port (external)
-containerPort: 8080   # Container port (internal)
-```
-
-Default: same as `port`
-
-### `replicas`
-
-Number of pod replicas.
-
-```yaml
-replicas: 3
-```
-
-Default: `1`
-
-### `hpa`
-
-Horizontal Pod Autoscaler config. Use this when you want autoscaling instead of fixed `replicas`.
+Pair of `minReplicas` + `maxReplicas`. Both must be set together. The HPA uses CPU 80% target.
 
 ```yaml
 hpa:
@@ -195,51 +261,146 @@ hpa:
   maxReplicas: 10
 ```
 
-!!! note
-    If `replicas` is set, it takes priority and HPA is not created.
+#### `singleton`
 
-### `resources`
+The single domain knob for "this app cannot run two versions concurrently":
 
-Container resource requests/limits.
+- `false` / omitted → RollingUpdate, zero-downtime (default).
+- `true` → Recreate strategy: old pods fully terminate before new ones start. PDB skipped. Use for leader-elected jobs, in-memory state, exclusive resource locks.
 
-```yaml
-resources:
-  requests:
-    memory: 300Mi
-    cpu: 100m
-  limits:
-    memory: 600Mi
-    cpu: 200m
-```
+The semantic lint rejects `singleton: true` combined with `hpa.minReplicas > 1` or `replicas > 1`.
 
-Defaults when not provided:
+#### `maxDown`
+
+Tunes the PodDisruptionBudget's `maxUnavailable` count — how many pods may be evicted at once during voluntary disruptions.
+
+| `replicas` | `maxDown` omitted | `maxDown: 1` | `maxDown: 0` |
+|---|---|---|---|
+| 1 | PDB not created | not created | not created |
+| 2 | 1 (half) | 1 | 0 (drains blocked) |
+| 4 | 2 (half) | 1 (stricter) | 0 (drains blocked) |
+| HPA min 3 | 1 | 1 | 0 |
+
+Set lower for latency-critical apps. Set `0` only when you truly cannot tolerate even one pod restart — be aware it blocks node drains until pods reschedule.
+
+### Resources
+
+#### `resources`
+
+Container requests + limits. Defaults when omitted:
 
 - `requests.memory: 200Mi`
 - `requests.cpu: 75m`
-- `limits` are calculated as `2x requests`
+- `limits` = 2× requests
 
-### `hostname`
+The semantic lint rejects `limits.memory < requests.memory` and `limits.cpu < requests.cpu` (k8s would also reject, but failing in PR is faster).
 
-Custom hostname for external access. Overrides the auto-generated `<name>-<namespace>.<baseDomain>` pattern.
+### Health probes
+
+#### `readinessProbe` / `livenessProbe`
+
+Both take `path` (required) and `port` (optional, defaults to `containerPort`). When you omit `readinessProbe`, the operator inserts a default TCP probe on `containerPort` so rolling updates remain zero-downtime even for apps that forget probes.
 
 ```yaml
-hostname: api.mycompany.com
+readinessProbe:
+  path: /healthz
+livenessProbe:
+  path: /healthz
 ```
 
-!!! warning
-    If you use a custom hostname, you must configure DNS for that domain separately. The platform's ExternalDNS only manages the `*.easysolution.work` zone.
+### Observability
+
+#### `metrics`
+
+Three forms:
+
+- `metrics: true` (default) — ServiceMonitor at `/metrics`
+- `metrics: false` — disabled
+- `metrics: { enabled: true, path: /actuator/prometheus }` — custom path (Spring Boot, etc.)
+
+#### `shutdown`
+
+Graceful termination tuning:
+
+- `preStopSleepSeconds` (default 15) — endpoint drain wait before SIGTERM.
+- `drainBufferSeconds` (default 5) — post-SIGTERM in-flight request budget.
+
+`terminationGracePeriodSeconds` is auto-computed as the sum. Increase `drainBufferSeconds` for long uploads, streaming, or batch work.
+
+### Service mesh
+
+Presence of the `traffic:` block opts the workload into Istio ambient mesh. The operator labels the namespace, ensures a waypoint Gateway, and creates DestinationRule + (optionally) EnvoyFilter resources.
+
+#### `traffic.provider`
+
+Empty or `istio`. Reserved for future mesh providers.
+
+#### `traffic.rateLimit`
+
+Envoy local (per-pod) rate limit:
+
+```yaml
+traffic:
+  rateLimit:
+    enabled: true
+    mode: local
+    local:
+      requestsPerSecond: 100
+      burst: 20
+```
+
+Token bucket: `max_tokens = requestsPerSecond + burst`, refills `requestsPerSecond` per second. The lint warns if `rateLimit.enabled` is set without the `traffic:` block.
+
+#### `traffic.ejectUnhealthy`
+
+Toggle for Istio outlier detection (failing endpoints removed from LB pool):
+
+- `true` / omitted → enabled with platform defaults (5 consecutive 5xx → 30s eject, max 50% of pods).
+- `false` → disabled. Use for workloads that *legitimately* return 5xx (webhook endpoints, batch processors with retries). The lint emits a notice when disabled.
+
+No tuning knobs by design — the thresholds are platform-managed.
+
+#### `traffic.latencyAware`
+
+Load balancer algorithm:
+
+- `false` / omitted → ROUND_ROBIN (Istio default).
+- `true` → LEAST_REQUEST (power-of-two-choices).
+
+Only flip this for **heterogeneous-latency** workloads — services where some endpoints hit cache (fast) and others hit DB (slow). For uniform request latency, round-robin is better. Verify P50 vs P99 in Grafana before enabling.
+
+### Canary
+
+#### `canary`
+
+Weighted canary rollout via HTTPRoute split:
+
+```yaml
+canary:
+  enabled: true
+  weight: 10          # 10% to canary, 90% to stable
+  tag: v2.0.0-rc1     # canary image tag
+```
+
+When `enabled: true`, the operator:
+
+1. Locks the current `buildTag` as `status.stableTag`.
+2. Stable deployment keeps serving the locked tag.
+3. Canary deployment runs the new image at `tag`.
+4. HTTPRoute splits traffic by `weight`.
+
+Set `enabled: false` (or remove) to promote: canary disappears, stable picks up the latest tag.
 
 ## Auto-Detected Fields
 
-Several fields are automatically derived if not specified:
-
 | Field | Auto-Detected From | Fallback |
-|-------|-------------------|----------|
+|---|---|---|
 | `name` | Folder path (`api/` → `api`) | — |
 | `namespace` | Filename (`prod.yaml` → `prod`) | — |
-| `hostname` | `<name>-<namespace>.easysolution.work` | — |
-| `port` | Image `EXPOSE`, `ENV PORT=`, or `CMD --port` | `8080` |
-| `tag` | — | Repo default branch (Git) / `latest` (image) |
+| `hostname` | `<name>-<namespace>.<BASE_DOMAIN>` | — |
+| `port` | Image `EXPOSE`, `ENV PORT=`, `CMD --port` | `8080` |
+| `containerPort` | Same as `port` | — |
+| `tag` | Repository default branch (git) / `latest` (image) | — |
 
 ## Complete Examples
 
@@ -250,29 +411,72 @@ image: nginx:alpine
 port: 80
 ```
 
-### Git-Based API with Custom Tag
+### Git-Based API with HPA + Mesh
 
-```yaml title="api/stage.yaml"
-repo: https://github.com/your-org/api-service
-tag: v3.1.0
-replicas: 2
+```yaml title="api/prod.yaml"
+repo: https://github.com/your-org/api
+hpa:
+  minReplicas: 2
+  maxReplicas: 10
+resources:
+  requests:
+    memory: 256Mi
+    cpu: 100m
+traffic:
+  rateLimit:
+    enabled: true
+    local:
+      requestsPerSecond: 200
+      burst: 50
 ```
 
-### Monorepo Microservice
+### Singleton Background Worker
 
-```yaml title="auth/preprod.yaml"
-repo: https://github.com/your-org/platform
-dockerfile: services/auth/Dockerfile
-tag: release/2.0
-port: 4000
-replicas: 3
+```yaml title="worker/prod.yaml"
+repo: https://github.com/your-org/worker
+replicas: 1
+singleton: true                  # leader-elected, exclusive DB lock
+readinessProbe:
+  path: /ready
+shutdown:
+  preStopSleepSeconds: 30
+  drainBufferSeconds: 60         # long-running jobs need time to wrap up
 ```
 
-### Custom Domain
+### Latency-Critical API
 
-```yaml title="frontend/prod.yaml"
-image: ghcr.io/your-org/frontend:latest
-hostname: app.yourcompany.com
-port: 3000
-replicas: 5
+```yaml title="payments/prod.yaml"
+repo: https://github.com/your-org/payments
+hpa:
+  minReplicas: 4
+  maxReplicas: 20
+maxDown: 1                       # never lose more than one pod at a time
+traffic:
+  latencyAware: true             # mixed cache/DB latency, least-request helps
+  rateLimit:
+    enabled: true
+    local:
+      requestsPerSecond: 500
+      burst: 100
+```
+
+### Webhook Receiver (5xx is normal)
+
+```yaml title="github-webhook/prod.yaml"
+repo: https://github.com/your-org/gh-webhook
+traffic:
+  ejectUnhealthy: false          # upstream sometimes returns 5xx legitimately
+```
+
+### Canary Rollout
+
+```yaml title="api/prod.yaml"
+repo: https://github.com/your-org/api
+hpa:
+  minReplicas: 3
+  maxReplicas: 10
+canary:
+  enabled: true
+  weight: 20
+  tag: v3.0.0-rc1
 ```

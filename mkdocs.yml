@@ -105,6 +105,7 @@ nav:
   - User Guide:
       - user-guide/index.md
       - YAML Reference: user-guide/yaml-reference.md
+      - Validation: user-guide/validation.md
       - Deploying Images: user-guide/deploying-images.md
       - Deploying from Git: user-guide/deploying-from-git.md
       - Rebuild Strategies: user-guide/rebuild-strategies.md
