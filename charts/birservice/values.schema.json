@@ -1,0 +1,213 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BirService chart values",
+  "description": "Schema for tenant values.yaml. Validated by Helm at install/template time and by IDEs (VSCode yaml-language-server reads charts/*/values.schema.json automatically). Single source of truth: extend BirServiceSpec → easy-deploy-platform CRD schema → regenerate this file.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "BirService CR name. Auto-derived from Helm release name if empty."
+    },
+    "image": {
+      "type": "string",
+      "description": "Fully-qualified image (ealen/echo-server:0.9.2). Exclusive with repo."
+    },
+    "repo": {
+      "type": "string",
+      "description": "Image repo (ghcr.io/acme/app) or Git URL (https://github.com/user/app). Exclusive with image."
+    },
+    "tag": {
+      "type": "string",
+      "description": "Image tag or git ref. Default: latest for image repos, main for git repos."
+    },
+    "imageTag": {
+      "type": "string",
+      "description": "Rollback override — previous build SHA (e.g. abc1234)."
+    },
+    "dockerfile": {
+      "type": "string",
+      "description": "Dockerfile path relative to repo root. Default: Dockerfile."
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535,
+      "description": "Service port. 0 or omitted = auto-detect from image or default 8080."
+    },
+    "containerPort": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535,
+      "description": "Container port. 0 or omitted = same as port."
+    },
+    "replicas": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Fixed pod count. Default 1 if HPA is not set. Ignored if hpa.minReplicas/maxReplicas are set."
+    },
+    "hpa": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Horizontal Pod Autoscaler. Both fields required together. Ignored if replicas is set.",
+      "properties": {
+        "minReplicas": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "0 disables HPA. >=1 enables HPA when paired with maxReplicas."
+        },
+        "maxReplicas": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "0 disables HPA. >=1 enables HPA when paired with minReplicas."
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Container resource requests/limits. Defaults: requests cpu=75m memory=200Mi; limits 2x requests.",
+      "properties": {
+        "requests": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "memory": { "type": "string", "description": "K8s memory quantity (200Mi, 1Gi)." },
+            "cpu":    { "type": "string", "description": "K8s CPU quantity (75m, 0.5, 1)." }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "memory": { "type": "string" },
+            "cpu":    { "type": "string" }
+          }
+        }
+      }
+    },
+    "hostname": {
+      "type": "string",
+      "description": "Public DNS name. Empty = auto-generated <name>-<namespace>.<baseDomain>."
+    },
+    "expose": {
+      "type": "boolean",
+      "description": "false = internal-only (no HTTPRoute/DNS). Default true."
+    },
+    "metrics": {
+      "description": "Prometheus ServiceMonitor. true (default) = enabled with /metrics; false = disabled; object = custom path.",
+      "oneOf": [
+        { "type": "boolean" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "path":    { "type": "string", "description": "Metrics HTTP path (e.g. /actuator/prometheus)." }
+          }
+        }
+      ]
+    },
+    "traffic": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Mesh traffic policies. Presence implies mesh enabled (Istio).",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["", "istio"],
+          "description": "Mesh implementation. Empty or istio."
+        },
+        "rateLimit": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "mode": {
+              "type": "string",
+              "enum": ["local", "global"],
+              "description": "local (Envoy per-pod) or global (not implemented)."
+            },
+            "local": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "requestsPerSecond": { "type": "integer", "minimum": 1 },
+                "burst":             { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        },
+        "ejectUnhealthy": {
+          "type": "boolean",
+          "description": "Outlier detection. Default true. Set false for workloads that legitimately return 5xx."
+        },
+        "latencyAware": {
+          "type": "boolean",
+          "description": "LB algorithm. Default false (round-robin). True = least-request. Verify with P50/P99 histograms before enabling."
+        }
+      }
+    },
+    "readinessProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "livenessProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "singleton": {
+      "type": "boolean",
+      "description": "App can run only one version at a time (leader-elected, exclusive lock, in-memory state). Default false → zero-downtime rolling. True → brief downtime, PDB skipped."
+    },
+    "maxDown": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Max pods that may be unavailable during voluntary disruptions (node drains, upgrades). Default floor(replicas/2). 0 forbids voluntary disruption."
+    },
+    "shutdown": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Graceful termination. terminationGracePeriodSeconds = preStopSleepSeconds + drainBufferSeconds.",
+      "properties": {
+        "preStopSleepSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 600,
+          "description": "Endpoint drain wait before SIGTERM. Default 15."
+        },
+        "drainBufferSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 600,
+          "description": "Post-SIGTERM in-flight request budget. Default 5."
+        }
+      }
+    },
+    "canary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "weight":  { "type": "integer", "minimum": 0, "maximum": 100, "description": "Canary traffic %. Default 10." },
+        "image":   { "type": "string" },
+        "tag":     { "type": "string" }
+      }
+    },
+    "injectPipeline": {
+      "type": "boolean",
+      "description": "When true (default for git repos), operator injects GitHub Actions build workflow into the repo."
+    }
+  }
+}

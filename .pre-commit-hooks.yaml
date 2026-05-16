@@ -1,0 +1,17 @@
+- id: birservice-lint
+  name: BirService semantic lint (cross-field rules)
+  description: Validates tenant values.yaml for combinations the JSON schema cannot express (singleton+HPA, image+repo, limits<requests, …).
+  entry: bash scripts/birservice-lint-multi.sh
+  language: system
+  files: '(^|/)(dev|prod)\.yaml$'
+  pass_filenames: true
+  require_serial: true
+
+- id: birservice-helm-validate
+  name: BirService helm template (schema + template)
+  description: Renders the birservice chart with each changed values file. Catches schema violations (typos, wrong types, unknown fields) and template errors.
+  entry: bash scripts/birservice-helm-validate.sh
+  language: system
+  files: '(^|/)(dev|prod)\.yaml$'
+  pass_filenames: true
+  require_serial: true
