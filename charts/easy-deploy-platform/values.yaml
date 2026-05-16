@@ -214,7 +214,7 @@ crd:
       type: string
     imageTag:
       type: string
-      description: "Rollback üçün əvvəlki SHA (məs. abc1234)"
+      description: "Rollback override — previous build SHA (e.g. abc1234)."
     dockerfile:
       type: string
     injectPipeline:
@@ -307,7 +307,7 @@ crd:
           description: "Outlier detection on/off (default true). Set false for workloads that legitimately return 5xx."
         latencyAware:
           type: boolean
-          description: "LB algoritmi. Default false → round-robin. True → least-request (heterogen latency üçün). Qərardan əvvəl P50/P99 histogram-a bax."
+          description: "LB algorithm. Default false (round-robin). True switches to least-request, useful when request latency is heterogeneous (cache hits vs DB calls). Verify with P50/P99 histograms before enabling."
     readinessProbe:
       type: object
       description: "HTTP readiness probe. Port defaults to container port."
@@ -332,12 +332,12 @@ crd:
           maximum: 65535
     singleton:
       type: boolean
-      description: "App eyni anda yalnız bir versiya işlədə bilər (leader-elected, exclusive lock, in-memory state). Default false (rolling, zero-downtime). True → köhnə pod-lar tam dayanır, sonra yenisi başlayır (qısa downtime)."
+      description: "App can only run one version at a time (leader-elected job, exclusive lock, in-memory state). Default false → zero-downtime rolling deploy. True → old pods fully stop before new ones start (brief downtime), PDB skipped."
     maxDown:
       type: integer
       format: int32
       minimum: 0
-      description: "Disruption (node drain / upgrade) zamanı eyni anda maks neçə pod düşə bilər. Yazılmasa default replikaların yarısı (floor). 0 = heç bir voluntary disruption qadağan (node drain blok olur)."
+      description: "Maximum pods that may go down simultaneously during voluntary disruptions (node drains, upgrades). Default floor(replicas/2). Set lower for latency-critical apps. 0 forbids voluntary disruption (blocks node drains)."
   statusProperties:
     availableReplicas:
       type: integer

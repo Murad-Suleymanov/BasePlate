@@ -61,20 +61,20 @@ lim_cpu=$(strip_empty "$lim_cpu")
 
 # Rule: singleton + multi-replica HPA is contradictory.
 if [ "$singleton" = "true" ] && [ "$hpa_min" -gt 1 ]; then
-  error "singleton: true + hpa.minReplicas: $hpa_min — singleton apps cannot run multiple pods. Remove HPA or set minReplicas: 1."
+  error "singleton: true + hpa.minReplicas: $hpa_min — a singleton app cannot run multiple pods. Remove the HPA block or set minReplicas: 1."
 fi
 if [ "$singleton" = "true" ] && [ "$replicas" -gt 1 ]; then
-  error "singleton: true + replicas: $replicas — singleton apps cannot run multiple pods. Set replicas: 1 or remove."
+  error "singleton: true + replicas: $replicas — a singleton app cannot run multiple pods. Set replicas: 1 or remove the field."
 fi
 
 # Rule: image and repo are mutually exclusive.
 if [ -n "$image" ] && [ -n "$repo" ]; then
-  error "image and repo are mutually exclusive — use one. image=$image repo=$repo"
+  error "image and repo are mutually exclusive — pick one. image=$image repo=$repo"
 fi
 
 # Rule: replicas + hpa is a precedence trap (replicas wins).
 if [ "$replicas" -gt 0 ] && [ "$hpa_min" -gt 0 ]; then
-  warn "replicas: $replicas + hpa.minReplicas: $hpa_min — replicas wins, HPA will not be created. Remove one."
+  warn "replicas: $replicas + hpa.minReplicas: $hpa_min — replicas wins, the HPA will not be created. Remove one."
 fi
 
 # Rule: hpa.minReplicas > hpa.maxReplicas.
@@ -82,22 +82,22 @@ if [ "$hpa_min" -gt 0 ] && [ "$hpa_max" -gt 0 ] && [ "$hpa_min" -gt "$hpa_max" ]
   error "hpa.minReplicas ($hpa_min) > hpa.maxReplicas ($hpa_max)."
 fi
 
-# Rule: maxDown >= effective replicas — PDB will be skipped (no actual protection).
+# Rule: maxDown >= effective replicas → PDB would never block, skip.
 effective=$replicas
 [ "$effective" -eq 0 ] && effective=$hpa_min
 [ "$effective" -eq 0 ] && effective=1
 if [ "$max_down" -ge 0 ] && [ "$max_down" -ge "$effective" ]; then
-  warn "maxDown ($max_down) >= effective replicas ($effective) — PDB skipped, no voluntary-disruption protection."
+  warn "maxDown ($max_down) >= effective replicas ($effective) — PDB will be skipped, no voluntary-disruption protection."
 fi
 
-# Rule: rateLimit.enabled requires traffic.provider istio (or empty).
+# Rule: rateLimit.enabled requires the traffic block (mesh intent).
 if [ "$ratelimit_enabled" = "true" ] && [ "$traffic_present" != "true" ]; then
-  error "rateLimit.enabled but traffic block missing — rate limit needs the mesh."
+  error "rateLimit.enabled set but traffic block is missing — rate limit requires the mesh."
 fi
 
-# Rule: ejectUnhealthy: false makes outlier detection a no-op — make sure it's intentional.
+# Rule: ejectUnhealthy: false makes outlier detection a no-op — confirm intent.
 if [ "$eject" = "false" ]; then
-  note "ejectUnhealthy: false — outlier detection disabled. Confirm this app legitimately returns 5xx (webhook, batch endpoint)."
+  note "ejectUnhealthy: false — outlier detection disabled. Make sure this app legitimately returns 5xx (webhook, batch endpoint, …)."
 fi
 
 # Rule: limits < requests (k8s would reject at apply, fail fast here).

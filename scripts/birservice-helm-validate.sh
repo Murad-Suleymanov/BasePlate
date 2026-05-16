@@ -23,29 +23,28 @@ emit_annotations() {
   local err="$2"
   local line_no prop msg
 
-  # "Additional property X is not allowed" → naməlum field (typo və ya naməlum knob)
+  # "Additional property X is not allowed" → unknown field (typo or unsupported knob)
   while IFS= read -r prop; do
     [ -z "$prop" ] && continue
     line_no=$(grep -n "^[[:space:]]*${prop}:" "$file" | head -1 | cut -d: -f1 || true)
     if [ -n "$line_no" ]; then
-      echo "::error file=${file},line=${line_no}::Naməlum field '${prop}'. values.schema.json-da yoxdur — typo? Mümkün dəyərləri görmək üçün VSCode-da Ctrl+Space."
+      echo "::error file=${file},line=${line_no}::Unknown field '${prop}' — not declared in values.schema.json. Likely a typo. In VSCode, hit Ctrl+Space for valid options."
     else
-      echo "::error file=${file}::Naməlum field '${prop}'."
+      echo "::error file=${file}::Unknown field '${prop}' — not declared in values.schema.json."
     fi
   done < <(echo "$err" | grep -oE "Additional property [^ ]+ is not allowed" | awk '{print $3}')
 
-  # "value at path X must be of type Y" — tip uyğunsuzluğu
+  # "value at path X must be of type Y" → type mismatch
   while IFS= read -r path; do
     [ -z "$path" ] && continue
-    # path "spec.replicas" formatında ola bilər; sondan field adını götür
     field=$(basename "$path" | tr -d '.')
     line_no=$(grep -n "^[[:space:]]*${field}:" "$file" | head -1 | cut -d: -f1 || true)
     if [ -n "$line_no" ]; then
-      echo "::error file=${file},line=${line_no}::Tip uyğunsuzluğu '${field}' field-ində. Schema-da yoxla."
+      echo "::error file=${file},line=${line_no}::Type mismatch on field '${field}'. See values.schema.json for the expected type."
     fi
   done < <(echo "$err" | grep -oE "value at path [^ ]+ " | awk '{print $4}')
 
-  # Fallback: schema xətasını tutmadıqsa ham çıxışı ümumi ::error kimi göstər
+  # Fallback: if we didn't recognize the schema error shape, dump the raw text.
   if ! echo "$err" | grep -qE "Additional property|value at path"; then
     msg=$(echo "$err" | tr '\n' ' ' | sed 's/  */ /g' | head -c 500)
     echo "::error file=${file}::${msg}"
