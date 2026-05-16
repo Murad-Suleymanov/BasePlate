@@ -43,6 +43,12 @@ metrics: true
 #       requestsPerSecond: 100
 #       burst: 20
 # traffic: yazılmasa mesh idarəsi yoxdur; minimal mesh üçün: traffic: {}
+#
+# ejectUnhealthy: failing pod-ları müvəqqəti load balancer-dan çıxar (Istio outlier
+# detection). Mesh aktiv olanda default true (5 ardıcıl 5xx → 30s eject, maks 50% pod).
+# Yalnız 5xx qaytaran workload-lar üçün söndür (webhook, batch endpoint və s.):
+# traffic:
+#   ejectUnhealthy: false
 
 # strategy: Deployment update strategy. Yazılmasa default — RollingUpdate, maxUnavailable=0, maxSurge=25%.
 # Recreate: stateful/singleton tətbiqlər üçün (downtime qəbul olunur).

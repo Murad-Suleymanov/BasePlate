@@ -344,6 +344,10 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
+	if err := r.reconcileOutlierDetection(ctx, bs); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	meshNeedRollout, err := r.meshNeedsRolloutForSidecar(ctx, bs)
 	if err != nil {
 		return ctrl.Result{}, err

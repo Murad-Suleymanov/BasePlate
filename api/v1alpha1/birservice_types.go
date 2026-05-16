@@ -124,6 +124,13 @@ type TrafficSpec struct {
 
 	// RateLimit configures request rate limiting (Envoy local rate limit for mode=local).
 	RateLimit *RateLimitSpec `json:"rateLimit,omitempty"`
+
+	// EjectUnhealthy controls whether failing pods are temporarily removed from the
+	// load-balancing pool by the waypoint Envoy (Istio outlier detection). Default true
+	// with platform-managed thresholds (5 consecutive 5xx → 30s eject, max 50% of pods).
+	// Set false to disable for workloads that legitimately return 5xx (e.g. webhook
+	// endpoints, batch processors). No tuning knobs by design.
+	EjectUnhealthy *bool `json:"ejectUnhealthy,omitempty"`
 }
 
 // RateLimitSpec configures rate limiting for the BirService workload.

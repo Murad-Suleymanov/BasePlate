@@ -169,6 +169,9 @@ spec:
                               format: int32
                               minimum: 0
                               description: Extra burst capacity added to token bucket max_tokens.
+                    ejectUnhealthy:
+                      type: boolean
+                      description: "Outlier detection on/off (default true). Set false for workloads that legitimately return 5xx."
                 readinessProbe:
                   type: object
                   description: HTTP readiness probe. Port defaults to container port.

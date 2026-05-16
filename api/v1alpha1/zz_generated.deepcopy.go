@@ -129,6 +129,11 @@ func (in *TrafficSpec) DeepCopyInto(out *TrafficSpec) {
 		*out = new(RateLimitSpec)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.EjectUnhealthy != nil {
+		in, out := &in.EjectUnhealthy, &out.EjectUnhealthy
+		*out = new(bool)
+		**out = **in
+	}
 }
 
 func (in *TrafficSpec) DeepCopy() *TrafficSpec {
