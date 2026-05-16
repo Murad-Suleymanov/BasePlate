@@ -2,7 +2,6 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // BirServiceSpec defines the desired state of BirService
@@ -77,9 +76,23 @@ type BirServiceSpec struct {
 	// Operator applies default timings (initialDelay=15s, period=10s, failureThreshold=3).
 	LivenessProbe *ProbeSpec `json:"livenessProbe,omitempty"`
 
-	// Strategy controls deployment update strategy. When omitted, defaults to
-	// RollingUpdate with maxUnavailable=0 and maxSurge=25%.
-	Strategy *StrategySpec `json:"strategy,omitempty"`
+	// Singleton declares that the app cannot run two versions concurrently
+	// (in-memory state, leader-elected job, exclusive resource lock).
+	// When true: deploys stop all old pods before starting new ones (brief downtime),
+	// PDB is skipped, and replicas/HPA are still honored but typically set to 1.
+	// When false or omitted (default): zero-downtime rolling deploy with platform-managed
+	// surge/unavailable budgets.
+	Singleton *bool `json:"singleton,omitempty"`
+
+	// MaxDown is the maximum number of pods that may be down simultaneously during
+	// voluntary disruptions (node drains, cluster upgrades, autoscaler removing nodes).
+	// Maps to the PodDisruptionBudget maxUnavailable count.
+	// When omitted, defaults to floor(N/2) where N is replicas or hpa.minReplicas
+	// (half the fleet may go, half stays). Set lower (e.g. 1) for latency-critical apps
+	// where losing more than one pod degrades the SLA. Set 0 to forbid any voluntary
+	// disruption (warning: blocks node drains until pods reschedule).
+	// Ignored when singleton: true or effective replicas < 2.
+	MaxDown *int32 `json:"maxDown,omitempty"`
 
 	// Shutdown tunes graceful termination. preStopSleepSeconds drains endpoints
 	// before SIGTERM; terminationGracePeriodSeconds is auto-derived as preStopSleep + 5.
@@ -97,21 +110,6 @@ type ShutdownSpec struct {
 	// requests before SIGKILL. terminationGracePeriodSeconds = PreStopSleepSeconds + DrainBufferSeconds.
 	// Default 5. Increase for apps with long-running requests (uploads, streaming, batch).
 	DrainBufferSeconds *int32 `json:"drainBufferSeconds,omitempty"`
-}
-
-// StrategySpec selects the Deployment update strategy and tunes its rolling parameters.
-// Allowed Type values are "RollingUpdate" (default, zero-downtime) and "Recreate"
-// (kill-all then start-all; required for stateful/singleton apps that cannot run two
-// versions concurrently — accepts downtime during rollout).
-type StrategySpec struct {
-	// Type is "RollingUpdate" (default) or "Recreate". Empty means RollingUpdate.
-	Type string `json:"type,omitempty"`
-	// MaxSurge is the max number/percent of pods above desired during a rolling update.
-	// Default "25%". Ignored for Recreate.
-	MaxSurge *intstr.IntOrString `json:"maxSurge,omitempty"`
-	// MaxUnavailable is the max number/percent of pods that can be unavailable during a
-	// rolling update. Default 0 (zero-downtime). Ignored for Recreate.
-	MaxUnavailable *intstr.IntOrString `json:"maxUnavailable,omitempty"`
 }
 
 // TrafficSpec groups mesh traffic settings. Presence of spec.traffic means mesh intent;

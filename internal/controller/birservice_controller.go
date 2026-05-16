@@ -851,22 +851,16 @@ func resolveShutdown(bs *deployv1alpha1.BirService) (int32, int32) {
 	return sleep, buffer
 }
 
-// resolveDeploymentStrategy maps spec.strategy to an apps/v1 DeploymentStrategy.
-// Defaults: RollingUpdate, maxUnavailable=0, maxSurge=25%.
+// resolveDeploymentStrategy maps the domain-level singleton flag to an apps/v1
+// DeploymentStrategy. Singleton apps cannot run two versions concurrently → Recreate
+// (brief downtime). Otherwise RollingUpdate with platform-managed budgets: zero
+// degradation (maxUnavailable=0) plus 25% burst headroom — industry-standard SRE defaults.
 func resolveDeploymentStrategy(bs *deployv1alpha1.BirService) appsv1.DeploymentStrategy {
-	if bs.Spec.Strategy != nil && strings.EqualFold(bs.Spec.Strategy.Type, "Recreate") {
+	if isSingleton(bs) {
 		return appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
 	}
 	maxUnavailable := intstr.FromInt(0)
 	maxSurge := intstr.FromString("25%")
-	if bs.Spec.Strategy != nil {
-		if bs.Spec.Strategy.MaxUnavailable != nil {
-			maxUnavailable = *bs.Spec.Strategy.MaxUnavailable
-		}
-		if bs.Spec.Strategy.MaxSurge != nil {
-			maxSurge = *bs.Spec.Strategy.MaxSurge
-		}
-	}
 	return appsv1.DeploymentStrategy{
 		Type: appsv1.RollingUpdateDeploymentStrategyType,
 		RollingUpdate: &appsv1.RollingUpdateDeployment{
@@ -874,6 +868,28 @@ func resolveDeploymentStrategy(bs *deployv1alpha1.BirService) appsv1.DeploymentS
 			MaxSurge:       &maxSurge,
 		},
 	}
+}
+
+func isSingleton(bs *deployv1alpha1.BirService) bool {
+	return bs.Spec.Singleton != nil && *bs.Spec.Singleton
+}
+
+// resolveMaxDown returns the PDB maxUnavailable count. Honors spec.maxDown when set
+// (including 0 for "block all voluntary disruption"). Default: floor(N/2), but at
+// least 1 so the PDB never blocks every drain.
+func resolveMaxDown(bs *deployv1alpha1.BirService, effectiveReplicas int32) int32 {
+	if bs.Spec.MaxDown != nil {
+		v := *bs.Spec.MaxDown
+		if v < 0 {
+			v = 0
+		}
+		return v
+	}
+	half := effectiveReplicas / 2
+	if half < 1 {
+		half = 1
+	}
+	return half
 }
 
 // reconcilePDB ensures a PodDisruptionBudget exists for the workload when the
@@ -896,8 +912,9 @@ func (r *BirServiceReconciler) reconcilePDB(ctx context.Context, bs *deployv1alp
 		return client.IgnoreNotFound(err)
 	}
 
-	// Recreate strategy: skip PDB
-	if bs.Spec.Strategy != nil && strings.EqualFold(bs.Spec.Strategy.Type, "Recreate") {
+	// Singleton apps run Recreate — voluntary-disruption protection is meaningless when
+	// the rollout is all-or-nothing and only one replica is ever running.
+	if isSingleton(bs) {
 		return deletePDB()
 	}
 
@@ -909,6 +926,12 @@ func (r *BirServiceReconciler) reconcilePDB(ctx context.Context, bs *deployv1alp
 		effectiveMin = *hpaMin
 	}
 	if effectiveMin < 2 {
+		return deletePDB()
+	}
+
+	maxDown := resolveMaxDown(bs, effectiveMin)
+	if maxDown >= effectiveMin {
+		// PDB would never block anything — skip rather than create a noop.
 		return deletePDB()
 	}
 
@@ -924,7 +947,7 @@ func (r *BirServiceReconciler) reconcilePDB(ctx context.Context, bs *deployv1alp
 				matchLabels[k] = v
 			}
 			pdb.Object["spec"] = map[string]interface{}{
-				"minAvailable": "50%",
+				"maxUnavailable": int64(maxDown),
 				"selector": map[string]interface{}{
 					"matchLabels": matchLabels,
 				},

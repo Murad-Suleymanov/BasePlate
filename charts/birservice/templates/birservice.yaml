@@ -102,9 +102,11 @@ spec:
   livenessProbe:
 {{ toYaml .Values.livenessProbe | nindent 4 }}
 {{- end }}
-{{- if .Values.strategy }}
-  strategy:
-{{ toYaml .Values.strategy | nindent 4 }}
+{{- if hasKey .Values "singleton" }}
+  singleton: {{ .Values.singleton }}
+{{- end }}
+{{- if hasKey .Values "maxDown" }}
+  maxDown: {{ .Values.maxDown }}
 {{- end }}
 {{- if .Values.shutdown }}
   shutdown:

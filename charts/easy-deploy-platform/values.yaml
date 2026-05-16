@@ -327,6 +327,14 @@ crd:
           format: int32
           minimum: 1
           maximum: 65535
+    singleton:
+      type: boolean
+      description: "App eyni anda yalnız bir versiya işlədə bilər (leader-elected, exclusive lock, in-memory state). Default false (rolling, zero-downtime). True → köhnə pod-lar tam dayanır, sonra yenisi başlayır (qısa downtime)."
+    maxDown:
+      type: integer
+      format: int32
+      minimum: 0
+      description: "Disruption (node drain / upgrade) zamanı eyni anda maks neçə pod düşə bilər. Yazılmasa default replikaların yarısı (floor). 0 = heç bir voluntary disruption qadağan (node drain blok olur)."
   statusProperties:
     availableReplicas:
       type: integer

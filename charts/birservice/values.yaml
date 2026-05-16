@@ -50,14 +50,19 @@ metrics: true
 # traffic:
 #   ejectUnhealthy: false
 
-# strategy: Deployment update strategy. Yazılmasa default — RollingUpdate, maxUnavailable=0, maxSurge=25%.
-# Recreate: stateful/singleton tətbiqlər üçün (downtime qəbul olunur).
-# strategy:
-#   type: RollingUpdate
-#   maxSurge: 25%
-#   maxUnavailable: 0
-# strategy:
-#   type: Recreate
+# singleton: app eyni anda yalnız bir versiya işlədə bilərmi?
+# Default false → zero-downtime rolling deploy (yeni pod ayağa qalxır, sonra köhnə ölür).
+# true → köhnə pod-lar tam dayanır, sonra yeniləri başlayır (qısa downtime qəbul olunur).
+# Yalnız o zaman true et ki, app həqiqətən exclusive resource tutur:
+# leader-elected job, in-memory state olan worker, DB-yə exclusive lock tutan migration runner.
+# singleton: true
+
+# maxDown: node drain / cluster upgrade zamanı eyni anda maks neçə pod düşə bilər.
+# Yazılmasa default replikaların yarısı (məs. replicas=4 → 2 pod düşə bilər).
+# Latency-critical app üçün azalt: maxDown: 1 (yalnız 1 pod itki, yerdə qalanlar yükü daşıyır).
+# Worker queue / eventually-consistent üçün artır.
+# Ehtiyatlı ol: maxDown: 0 — heç bir voluntary disruption olmasın (node drain blok olur, cluster upgrade çətinləşir).
+# maxDown: 1
 
 # shutdown: graceful termination konfiqurasiyası.
 # preStopSleepSeconds — SIGTERM-dən əvvəl saniyə (endpoint drain). Default 15.

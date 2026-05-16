@@ -210,20 +210,14 @@ spec:
                       minimum: 0
                       maximum: 600
                       description: Post-SIGTERM budget for in-flight requests to finish before SIGKILL. Default 5. Increase for long requests (uploads, streaming).
-                strategy:
-                  type: object
-                  description: Deployment update strategy. Defaults to RollingUpdate (maxUnavailable=0, maxSurge=25%).
-                  properties:
-                    type:
-                      type: string
-                      enum: ["RollingUpdate", "Recreate"]
-                      description: RollingUpdate (default, zero-downtime) or Recreate (kill-all then start-all; required for stateful/singleton apps).
-                    maxSurge:
-                      x-kubernetes-int-or-string: true
-                      description: Max pods above desired during rolling update. Default "25%". Ignored for Recreate.
-                    maxUnavailable:
-                      x-kubernetes-int-or-string: true
-                      description: Max pods unavailable during rolling update. Default 0. Ignored for Recreate.
+                singleton:
+                  type: boolean
+                  description: App can only run one version at a time (leader-elected, exclusive lock, in-memory state). Default false → zero-downtime rolling deploy. True → old pods fully stop before new ones start (brief downtime), PDB skipped.
+                maxDown:
+                  type: integer
+                  format: int32
+                  minimum: 0
+                  description: Maximum pods that may go down simultaneously during voluntary disruptions (node drains, upgrades). Default floor(replicas/2). Set lower for latency-critical apps. 0 forbids voluntary disruption (blocks node drains).
             status:
               type: object
               properties:
