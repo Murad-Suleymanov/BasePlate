@@ -49,6 +49,16 @@ metrics: true
 # Yalnız 5xx qaytaran workload-lar üçün söndür (webhook, batch endpoint və s.):
 # traffic:
 #   ejectUnhealthy: false
+#
+# latencyAware: LB algoritmi.
+# false (default) → round-robin: hər pod-a növbə ilə bərabər yük gedir. Latency stabil
+#   olan stateless API-lər üçün doğru seçim.
+# true → least-request: yeni request hansı pod-da ən az aktiv request varsa ora gedir.
+#   Yalnız request latency-si HETEROGEN olanda faydalıdır (məs. bəzi endpoint cache hit,
+#   bəzi endpoint DB miss). Qərardan əvvəl Grafana-da P50/P99 histogram-a bax —
+#   nisbəti > 5x olanda least-request adətən fayda verir.
+# traffic:
+#   latencyAware: true
 
 # singleton: app eyni anda yalnız bir versiya işlədə bilərmi?
 # Default false → zero-downtime rolling deploy (yeni pod ayağa qalxır, sonra köhnə ölür).

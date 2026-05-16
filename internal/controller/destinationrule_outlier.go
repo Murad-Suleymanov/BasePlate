@@ -21,31 +21,32 @@ var destinationRuleGVK = schema.GroupVersionKind{
 	Kind:    "DestinationRule",
 }
 
-func outlierDetectionName(bs *deployv1alpha1.BirService) string {
+// destinationRuleName keeps the legacy "-outlier" suffix so existing DRs are
+// adopted in place when ownership transitions across operator versions.
+func destinationRuleName(bs *deployv1alpha1.BirService) string {
 	return fmt.Sprintf("%s-outlier", bs.Name)
 }
 
-// reconcileOutlierDetection applies a DestinationRule with sane platform defaults so
-// failing pods are temporarily ejected from the load-balancing pool by the waypoint Envoy.
-// Always-on for mesh-enabled BirServices; no developer knobs (mirrors the tracing model).
-// Deleted when the workload is not mesh-enabled.
-func (r *BirServiceReconciler) reconcileOutlierDetection(ctx context.Context, bs *deployv1alpha1.BirService) error {
+// reconcileDestinationRule composes the per-service Istio DestinationRule from all
+// mesh traffic policies the operator manages (outlier detection, load-balancer
+// algorithm, …). One DR per service: each section is added only when its driver
+// is enabled, and the whole DR is deleted when no section is needed (or mesh is off).
+func (r *BirServiceReconciler) reconcileDestinationRule(ctx context.Context, bs *deployv1alpha1.BirService) error {
 	l := log.FromContext(ctx)
-	name := outlierDetectionName(bs)
+	name := destinationRuleName(bs)
 	key := types.NamespacedName{Name: name, Namespace: bs.Namespace}
 
 	if !bsNeedsWaypoint(bs) {
 		return r.deleteDestinationRuleIfExists(ctx, key)
 	}
 
-	// Escape hatch: spec.traffic.ejectUnhealthy: false disables outlier detection
-	// for workloads that legitimately return 5xx (webhooks, batch endpoints).
-	if bs.Spec.Traffic.EjectUnhealthy != nil && !*bs.Spec.Traffic.EjectUnhealthy {
+	trafficPolicy := buildTrafficPolicy(bs)
+	if len(trafficPolicy) == 0 {
 		return r.deleteDestinationRuleIfExists(ctx, key)
 	}
 
 	host := fmt.Sprintf("%s-svc.%s.svc.cluster.local", bs.Name, bs.Namespace)
-	l.Info("applying Istio DestinationRule for outlier detection", "name", name, "namespace", bs.Namespace, "host", host)
+	l.Info("applying Istio DestinationRule", "name", name, "namespace", bs.Namespace, "host", host)
 
 	dr := &unstructured.Unstructured{}
 	dr.SetGroupVersionKind(destinationRuleGVK)
@@ -58,19 +59,36 @@ func (r *BirServiceReconciler) reconcileOutlierDetection(ctx context.Context, bs
 			"app.kubernetes.io/managed-by": "easy-deploy-operator",
 		})
 		dr.Object["spec"] = map[string]interface{}{
-			"host": host,
-			"trafficPolicy": map[string]interface{}{
-				"outlierDetection": map[string]interface{}{
-					"consecutive5xxErrors": int64(5),
-					"interval":             "10s",
-					"baseEjectionTime":     "30s",
-					"maxEjectionPercent":   int64(50),
-				},
-			},
+			"host":          host,
+			"trafficPolicy": trafficPolicy,
 		}
 		return ctrl.SetControllerReference(bs, dr, r.Scheme)
 	})
 	return err
+}
+
+func buildTrafficPolicy(bs *deployv1alpha1.BirService) map[string]interface{} {
+	policy := map[string]interface{}{}
+
+	// Outlier detection: on by default for mesh workloads, opt-out via ejectUnhealthy: false.
+	if bs.Spec.Traffic.EjectUnhealthy == nil || *bs.Spec.Traffic.EjectUnhealthy {
+		policy["outlierDetection"] = map[string]interface{}{
+			"consecutive5xxErrors": int64(5),
+			"interval":             "10s",
+			"baseEjectionTime":     "30s",
+			"maxEjectionPercent":   int64(50),
+		}
+	}
+
+	// Load balancer: omit entirely when latencyAware is false/unset so Istio uses its
+	// default (round-robin). Setting LEAST_REQUEST switches to power-of-two-choices.
+	if bs.Spec.Traffic.LatencyAware != nil && *bs.Spec.Traffic.LatencyAware {
+		policy["loadBalancer"] = map[string]interface{}{
+			"simple": "LEAST_REQUEST",
+		}
+	}
+
+	return policy
 }
 
 func (r *BirServiceReconciler) deleteDestinationRuleIfExists(ctx context.Context, key types.NamespacedName) error {

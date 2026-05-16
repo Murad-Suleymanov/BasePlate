@@ -129,6 +129,13 @@ type TrafficSpec struct {
 	// Set false to disable for workloads that legitimately return 5xx (e.g. webhook
 	// endpoints, batch processors). No tuning knobs by design.
 	EjectUnhealthy *bool `json:"ejectUnhealthy,omitempty"`
+
+	// LatencyAware switches the load-balancer from round-robin (default) to least-request:
+	// each new request goes to the pod with the fewest in-flight requests. Useful when
+	// request latency is heterogeneous (some hit cache, some hit DB) — slow pods
+	// automatically get less traffic. For uniform request latency, round-robin is
+	// usually better. Verify with latency histograms (P50 vs P99) before enabling.
+	LatencyAware *bool `json:"latencyAware,omitempty"`
 }
 
 // RateLimitSpec configures rate limiting for the BirService workload.

@@ -115,6 +115,11 @@ func (in *TrafficSpec) DeepCopyInto(out *TrafficSpec) {
 		*out = new(bool)
 		**out = **in
 	}
+	if in.LatencyAware != nil {
+		in, out := &in.LatencyAware, &out.LatencyAware
+		*out = new(bool)
+		**out = **in
+	}
 }
 
 func (in *TrafficSpec) DeepCopy() *TrafficSpec {

@@ -172,6 +172,9 @@ spec:
                     ejectUnhealthy:
                       type: boolean
                       description: "Outlier detection on/off (default true). Set false for workloads that legitimately return 5xx."
+                    latencyAware:
+                      type: boolean
+                      description: "LB algorithm. Default false (round-robin). True switches to least-request (power-of-two-choices) — useful when request latency is heterogeneous (cache hits vs DB calls). Verify with P50/P99 histograms before enabling."
                 readinessProbe:
                   type: object
                   description: HTTP readiness probe. Port defaults to container port.

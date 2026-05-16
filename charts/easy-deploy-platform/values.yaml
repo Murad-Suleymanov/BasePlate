@@ -305,6 +305,9 @@ crd:
         ejectUnhealthy:
           type: boolean
           description: "Outlier detection on/off (default true). Set false for workloads that legitimately return 5xx."
+        latencyAware:
+          type: boolean
+          description: "LB algoritmi. Default false → round-robin. True → least-request (heterogen latency üçün). Qərardan əvvəl P50/P99 histogram-a bax."
     readinessProbe:
       type: object
       description: "HTTP readiness probe. Port defaults to container port."
