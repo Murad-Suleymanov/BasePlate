@@ -245,7 +245,6 @@ For each `BirService` with `repo`/`image` set:
 | `ServiceMonitor` | `<name>-monitor` | `metrics` enabled |
 | `DestinationRule` | `<name>-outlier` | `traffic:` present; merges outlier-detection + LB policy |
 | `EnvoyFilter` | `<name>-ratelimit` | `traffic.rateLimit.enabled: true` |
-| `ObservabilityPolicy` | `<name>-route-tracing` | tracing ratio > 0, exposed |
 | `Job` | `<name>-build-<tag>` | first build of a Git repo |
 | `Deployment` (canary) | `<name>-canary-deploy` | `canary.enabled: true` |
 | `Service` (canary) | `<name>-canary-svc` | `canary.enabled: true` |

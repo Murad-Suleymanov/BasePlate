@@ -184,7 +184,7 @@ func (r *BirServiceReconciler) upsertWaypointGateway(ctx context.Context, namesp
 			annotations = map[string]string{}
 		}
 		// "all" covers both service-VIP and workload (pod-IP) traffic. Required because
-		// gateways like NGF connect directly to pod IPs (resolved Endpoints), so a
+		// the ingress gateway connects directly to pod IPs (resolved Endpoints), so a
 		// service-only waypoint never sees ingress traffic.
 		annotations["istio.io/waypoint-for"] = "all"
 		gw.SetAnnotations(annotations)

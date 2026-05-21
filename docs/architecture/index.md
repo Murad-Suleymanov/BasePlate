@@ -34,7 +34,7 @@ graph TB
     end
 
     subgraph Network["Network & DNS"]
-        Gateway["NGINX Gateway<br/>Fabric"]
+        Gateway["Istio<br/>Gateway"]
         ExtDNS["ExternalDNS"]
         CertMgr["cert-manager"]
     end
@@ -89,7 +89,7 @@ graph TB
 
 | Component | Responsibility |
 |-----------|---------------|
-| **NGINX Gateway Fabric** | Routes HTTP/HTTPS traffic to services based on hostname |
+| **Istio Gateway** | Routes HTTP/HTTPS traffic to services based on hostname (Gateway API) |
 | **ExternalDNS** | Creates Cloudflare DNS A records from HTTPRoute annotations |
 | **cert-manager** | Provisions and renews TLS certificates from Let's Encrypt |
 
@@ -100,7 +100,7 @@ Namespace              Components
 ─────────              ──────────
 argocd                 ArgoCD server, repo server, application controller
 easy-deploy-system     Easy-Deploy operator, webhook server
-nginx-gateway          NGINX Gateway Fabric data plane + control plane
+nginx-gateway          Istio ingress gateway (main-gateway) data plane
 cert-manager           cert-manager controller, webhook, CA injector
 external-dns           ExternalDNS controller
 registry               Docker Registry v2
@@ -118,7 +118,7 @@ When a user accesses `https://myapp-dev.easysolution.work`:
 sequenceDiagram
     participant User
     participant DNS as Cloudflare DNS
-    participant GW as NGINX Gateway
+    participant GW as Istio Gateway
     participant Svc as Service (myapp-svc)
     participant Pod as Pod (myapp-deploy)
 

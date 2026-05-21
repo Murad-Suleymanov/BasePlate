@@ -91,7 +91,7 @@ flowchart TB
     Kaniko --> Registry["Local Registry"]
     Registry --> Deploy
 
-    Deploy --> Gateway["NGINX Gateway<br/>(TLS termination)"]
+    Deploy --> Gateway["Istio Gateway<br/>(TLS termination)"]
     Deploy --> DNS["ExternalDNS<br/>(Cloudflare)"]
 
     Gateway --> Live["https://app-ns.easysolution.work"]
@@ -106,7 +106,7 @@ flowchart TB
 | 3b | If `repo:` is a Git URL, the operator runs a Kaniko build, pushes to the local registry, then deploys | Operator |
 | 4 | ExternalDNS reads the HTTPRoute and creates a Cloudflare DNS A record | ExternalDNS |
 | 5 | A wildcard TLS certificate from Let's Encrypt covers all subdomains | cert-manager |
-| 6 | Traffic flows through the NGINX Gateway with TLS termination | NGINX Gateway Fabric |
+| 6 | Traffic flows through the Istio Gateway with TLS termination | Istio Gateway |
 
 ---
 
@@ -115,7 +115,7 @@ flowchart TB
 | Component | Purpose |
 |-----------|---------|
 | **Easy-Deploy Operator** | Reconciles `BirService` CRs into Deployments, Services, HTTPRoutes, and Kaniko Jobs |
-| **NGINX Gateway Fabric** | Gateway API ingress controller with HTTP/HTTPS listeners and TLS termination |
+| **Istio Gateway** | Gateway API ingress controller with HTTP/HTTPS listeners and TLS termination |
 | **cert-manager** | Issues `*.easysolution.work` wildcard certificate via Let's Encrypt DNS-01 |
 | **ExternalDNS** | Creates Cloudflare DNS A records from HTTPRoute resources |
 | **Local Registry** | In-cluster Docker Registry v2 for Kaniko-built images |
@@ -150,7 +150,7 @@ flowchart TB
 |-----------|------|
 | Go + controller-runtime | Custom Kubernetes operator |
 | Kaniko | In-cluster container image builds |
-| NGINX Gateway Fabric | Gateway API ingress controller |
+| Istio | Service mesh + Gateway API ingress controller |
 | cert-manager + Let's Encrypt | Wildcard TLS certificates (DNS-01) |
 | ExternalDNS + Cloudflare | Automatic DNS record management |
 | ArgoCD | GitOps continuous deployment |

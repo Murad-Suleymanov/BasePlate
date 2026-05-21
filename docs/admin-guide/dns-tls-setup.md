@@ -13,7 +13,7 @@ flowchart TB
     CertMgr -->|"Create TXT record"| CF2["Cloudflare DNS<br/>_acme-challenge"]
     CertMgr -->|"Fetch certificate"| LE["Let's Encrypt"]
     CertMgr -->|"Store in Secret"| Secret["wildcard-tls"]
-    Secret -->|"TLS termination"| GW["NGINX Gateway"]
+    Secret -->|"TLS termination"| GW["Istio Gateway"]
 ```
 
 ## Cloudflare Setup

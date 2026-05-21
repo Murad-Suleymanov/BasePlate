@@ -37,7 +37,7 @@ Developer                          Platform (Kubernetes)
                                    │  HTTPRoute            │        │
                                    │       │               ▼        │
                                    │       ▼          DNS A Record  │
-                                   │  NGINX Gateway                 │
+                                   │  Istio Gateway                 │
                                    │  (TLS termination)             │
                                    └─────────────────────────────────┘
                                               │
@@ -55,7 +55,7 @@ Developer                          Platform (Kubernetes)
 | 3b | If `repo:` is a Git URL, runs Kaniko build, pushes to local registry, then deploys | Operator |
 | 4 | HTTPRoute is read by ExternalDNS, creates Cloudflare DNS record | ExternalDNS |
 | 5 | Wildcard TLS certificate covers all subdomains | cert-manager |
-| 6 | Service is live at `https://<name>-<namespace>.easysolution.work` | NGINX Gateway |
+| 6 | Service is live at `https://<name>-<namespace>.easysolution.work` | Istio Gateway |
 
 ---
 
@@ -193,7 +193,7 @@ BasePlate-Infra/                             # Infrastructure repo
 │   ├── applicationsets/                     #   AppSet definitions
 │   ├── platform/values/                     #   easy-deploy-platform-values.yaml (image pinned by CI)
 │   └── infra-applications-values.yaml
-├── argocd/  cert-manager/  istio*/  nginx-gateway-fabric/  ...
+├── argocd/  cert-manager/  istio*/  gateway-config/  ...
 └── install-*.sh                             # Bootstrap scripts
 
 BasePlate-Dev/                               # Tenant values catalog
@@ -213,7 +213,7 @@ BasePlate-Dev/                               # Tenant values catalog
 | Component | Namespace | Purpose |
 |-----------|-----------|---------|
 | **Easy-Deploy Operator** | `easy-deploy-system` | Reconciles BirService CRs into Deployments, Services, HTTPRoutes, and Kaniko Jobs |
-| **NGINX Gateway Fabric** | `nginx-gateway` | Ingress gateway with HTTP/HTTPS listeners, TLS termination via wildcard cert |
+| **Istio Gateway** | `nginx-gateway` | Ingress gateway (Gateway API, gatewayClassName: istio) with HTTP/HTTPS listeners, TLS termination via wildcard cert |
 | **cert-manager** | `cert-manager` | Issues `*.easysolution.work` wildcard certificate via Let's Encrypt DNS-01 |
 | **ExternalDNS** | `external-dns` | Creates Cloudflare DNS A records from HTTPRoute resources |
 | **Local Registry** | `registry` | In-cluster Docker registry for Kaniko-built images (NodePort 30500) |
@@ -472,7 +472,7 @@ Username: `admin`.
 |-----------|------|
 | Go + controller-runtime | Custom operator |
 | Kaniko | In-cluster container image builds |
-| NGINX Gateway Fabric | Gateway API ingress controller |
+| Istio | Service mesh + Gateway API ingress controller |
 | cert-manager + Let's Encrypt | Wildcard TLS certificates (DNS-01) |
 | ExternalDNS + Cloudflare | Automatic DNS record management |
 | ArgoCD | GitOps continuous deployment |

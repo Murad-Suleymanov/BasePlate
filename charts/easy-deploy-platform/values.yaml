@@ -34,9 +34,6 @@ operator:
     webhookURL:
       enabled: true
       value: ""
-    tracingRatio:
-      enabled: false
-      value: "0"
   extraEnv: []
 
   envFrom:
@@ -133,11 +130,6 @@ rbac:
         enabled: true
         apiGroups: ["gateway.networking.k8s.io"]
         resources: ["gateways"]
-        verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-      observabilitypolicies:
-        enabled: true
-        apiGroups: ["gateway.nginx.org"]
-        resources: ["observabilitypolicies"]
         verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
       servicemonitors:
         enabled: true

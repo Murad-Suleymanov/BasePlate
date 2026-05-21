@@ -67,7 +67,6 @@ For each `BirService`, the operator creates and manages:
 | `ServiceMonitor` | `<name>-monitor` | `metrics` enabled (default true) |
 | `DestinationRule` | `<name>-outlier` | mesh-enabled (`traffic:` present); carries outlier detection + LB policy |
 | `EnvoyFilter` | `<name>-ratelimit` | `traffic.rateLimit.enabled: true` |
-| `ObservabilityPolicy` (NGF) | `<name>-route-tracing` | tracing ratio > 0, exposed |
 | `Job` (Kaniko) | `<name>-build-<tag>` | first build of a Git repo |
 | `Deployment` (canary) | `<name>-canary-deploy` | `canary.enabled: true` |
 | `Service` (canary) | `<name>-canary-svc` | `canary.enabled: true` |
@@ -161,7 +160,7 @@ This means the reconciler is triggered when:
 - A `BirService` is created, updated, or deleted
 - A Deployment, Service, HPA, or Job owned by a BirService changes
 
-Unstructured-typed resources (DestinationRule, EnvoyFilter, HTTPRoute, ObservabilityPolicy, ServiceMonitor, Gateway, PDB) are not in the `Owns()` set — they use unstructured clients to avoid pulling third-party CRD types into the operator's dependency tree. They still carry owner references so deletion cascades.
+Unstructured-typed resources (DestinationRule, EnvoyFilter, HTTPRoute, ServiceMonitor, Gateway, PDB) are not in the `Owns()` set — they use unstructured clients to avoid pulling third-party CRD types into the operator's dependency tree. They still carry owner references so deletion cascades.
 
 ## Health Probes
 
@@ -207,7 +206,7 @@ Presence of `spec.traffic` opts the workload into Istio ambient mesh. The operat
 
 1. Labels the namespace with `istio.io/dataplane-mode=ambient` and `istio.io/use-waypoint=waypoint`.
 2. Ensures a namespace-scoped `Gateway` named `waypoint` (`gatewayClassName: istio-waypoint`, `waypoint-for: all`). One waypoint Pod handles L7 traffic for all mesh-enabled siblings.
-3. Labels the workload's `Service` and pod template with `istio.io/use-waypoint=waypoint`. Pod-level labeling is required because gateways like NGF resolve `Endpoints` and connect directly to pod IPs, bypassing service-VIP waypoint binding.
+3. Labels the workload's `Service` and pod template with `istio.io/use-waypoint=waypoint`. Pod-level labeling is required because the ingress gateway resolves `Endpoints` and connects directly to pod IPs, bypassing service-VIP waypoint binding.
 4. Composes a per-service `DestinationRule` from the relevant traffic-policy sections (see below).
 5. Creates an `EnvoyFilter` when `traffic.rateLimit.enabled: true`.
 

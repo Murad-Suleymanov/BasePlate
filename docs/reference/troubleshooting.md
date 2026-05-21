@@ -40,7 +40,7 @@ kubectl -n easy-deploy-system logs deployment/easy-deploy-operator --tail=50
 
 ### 502 Bad Gateway
 
-This usually means the NGINX Gateway can route the request but the backend is unhealthy.
+This usually means the Istio Gateway can route the request but the backend is unhealthy.
 
 | Cause | Solution |
 |-------|----------|

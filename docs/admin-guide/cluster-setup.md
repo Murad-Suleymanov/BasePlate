@@ -109,7 +109,6 @@ kubectl apply -f argocd/${ENV}/application-root.yaml
 | `easy-deploy-platform` | `easy-deploy-system` | BirService CRD + Operator |
 | `easy-deploy-birservices` (ApplicationSet) | Per-service namespace | Auto-discovers developer YAMLs (`*/dev.yaml` or `*/prod.yaml`) |
 | `gateway` | — | Gateway manifests |
-| `nginx-gateway-fabric` | `nginx-gateway` | NGINX Gateway Fabric |
 | `cert-manager` | `cert-manager` | cert-manager controller + webhooks |
 | `monitoring` | — | Monitoring manifests |
 | `kube-prometheus-stack` | `monitoring` | Prometheus + Grafana |

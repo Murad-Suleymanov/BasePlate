@@ -4,8 +4,6 @@ import (
 	"context"
 	"flag"
 	"os"
-	"strconv"
-	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -58,30 +56,20 @@ func main() {
 	targetIP := os.Getenv("TARGET_IP")
 	registryURL := os.Getenv("REGISTRY_URL")
 	environment := os.Getenv("ENVIRONMENT")
-	tracingRatio := 0
-	if v := strings.TrimSpace(os.Getenv("TRACING_RATIO")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 100 {
-			tracingRatio = n
-		}
-	}
 	if baseDomain != "" {
 		ctrl.Log.Info("auto-hostname enabled", "baseDomain", baseDomain, "targetIP", targetIP)
 	}
 	if registryURL != "" {
 		ctrl.Log.Info("registry override enabled", "registryURL", registryURL)
 	}
-	if tracingRatio > 0 {
-		ctrl.Log.Info("tracing enabled", "ratio", tracingRatio)
-	}
 
 	if err := (&controller.BirServiceReconciler{
-		Client:       mgr.GetClient(),
-		Scheme:       mgr.GetScheme(),
-		BaseDomain:   baseDomain,
-		TargetIP:     targetIP,
-		RegistryURL:  registryURL,
-		Environment:  environment,
-		TracingRatio: tracingRatio,
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		BaseDomain:  baseDomain,
+		TargetIP:    targetIP,
+		RegistryURL: registryURL,
+		Environment: environment,
 	}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.Error(err, "unable to create controller", "controller", "BirService")
 		os.Exit(1)

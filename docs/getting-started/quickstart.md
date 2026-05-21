@@ -70,7 +70,7 @@ The platform:
 2. Rendered it through the Helm chart into a `BirService` custom resource
 3. The operator reconciled the CR into a Deployment, Service, and HTTPRoute
 4. ExternalDNS created a DNS A record on Cloudflare
-5. The NGINX Gateway began routing traffic with TLS termination
+5. The Istio Gateway began routing traffic with TLS termination
 
 ## Deploy Something Else
 

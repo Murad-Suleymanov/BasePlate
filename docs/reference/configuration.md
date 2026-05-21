@@ -17,7 +17,7 @@ When set, the operator generates hostnames in the format `<name>-<namespace>.<BA
 
 ### `TARGET_IP`
 
-The public IP address that ExternalDNS will use for DNS A records. This should be the public IP of your worker node running the NGINX Gateway Fabric.
+The public IP address that ExternalDNS will use for DNS A records. This should be the public IP of your worker node running the Istio ingress gateway.
 
 ## Operator Command-Line Flags
 
@@ -45,7 +45,7 @@ These are compiled into the operator and not configurable at runtime:
 | `registryURL` | `registry.registry.svc.cluster.local:5000` | Local registry address |
 | `kanikoImage` | `gcr.io/kaniko-project/executor:latest` | Kaniko build image |
 | `requeueBuild` | `10s` | Requeue interval while build is running |
-| `gatewayName` | `main-gateway` | Name of the NGINX Gateway resource |
+| `gatewayName` | `main-gateway` | Name of the Gateway resource HTTPRoutes attach to |
 | `gatewayNamespace` | `nginx-gateway` | Namespace of the gateway |
 
 ## Gateway Configuration
@@ -55,7 +55,7 @@ These are compiled into the operator and not configurable at runtime:
 | Setting | Value |
 |---------|-------|
 | Gateway name | `main-gateway` |
-| Gateway class | `nginx` |
+| Gateway class | `istio` |
 | HTTP listener | Port 80, all namespaces |
 | HTTPS listener | Port 443, TLS terminate, wildcard cert |
 

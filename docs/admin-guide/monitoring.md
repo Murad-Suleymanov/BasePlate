@@ -16,7 +16,7 @@ Easy-Deploy includes Prometheus and Grafana for cluster monitoring, deployed via
 
 ### Public URL
 
-Grafana is exposed publicly via the NGINX Gateway:
+Grafana is exposed publicly via the Istio Gateway:
 
 **https://grafana.easysolution.work**
 
@@ -59,7 +59,7 @@ Grafana comes with pre-configured dashboards from the kube-prometheus-stack:
 | Kubernetes / Compute Resources / Namespace (Pods) | Per-pod resource usage in a namespace |
 | Kubernetes / Compute Resources / Node (Pods) | Node-level resource breakdown |
 | CoreDNS | DNS query rates and latencies |
-| NGINX Gateway | (if configured) Request rates and response codes |
+| Istio Mesh / Istio Service | Request rates, response codes, and latencies |
 
 ## Monitoring Easy-Deploy
 

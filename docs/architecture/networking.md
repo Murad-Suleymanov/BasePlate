@@ -7,15 +7,15 @@ Easy-Deploy uses the Kubernetes Gateway API for traffic routing, combined with E
 ```mermaid
 flowchart TB
     Internet["Internet<br/>User Request"] -->|"DNS lookup"| CF["Cloudflare DNS<br/>A record → worker IP"]
-    CF --> GW["NGINX Gateway Fabric<br/>Ports 80 & 443"]
+    CF --> GW["Istio Gateway<br/>Ports 80 & 443"]
     GW -->|"TLS termination<br/>hostname matching"| Route["HTTPRoute<br/>(per service)"]
     Route --> Svc["ClusterIP Service<br/>(per service)"]
     Svc --> Pod["Application Pod"]
 ```
 
-## NGINX Gateway Fabric
+## Istio Gateway
 
-The platform uses [NGINX Gateway Fabric](https://github.com/nginx/nginx-gateway-fabric) as the Gateway API implementation.
+The platform uses [Istio](https://istio.io/) as the Gateway API implementation. The same Istio control plane runs the service mesh, so north-south (ingress) and east-west (mesh) traffic share one data plane.
 
 ### Gateway Resource
 
@@ -27,8 +27,12 @@ kind: Gateway
 metadata:
   name: main-gateway
   namespace: nginx-gateway
+  annotations:
+    # Istio auto-provisions the gateway Service; ClusterIP avoids a
+    # permanently-pending LoadBalancer on bare metal.
+    networking.istio.io/service-type: ClusterIP
 spec:
-  gatewayClassName: nginx
+  gatewayClassName: istio
   listeners:
     - name: http
       port: 80
@@ -56,9 +60,9 @@ Key design decisions:
 - **TLS termination** — the gateway handles TLS using the wildcard certificate
 - **Single gateway** — all services share the same gateway, differentiated by hostname
 
-### Host Ports
+### Node IP Binding
 
-The NGINX Gateway Fabric data plane is configured with `hostPort` bindings, so ports 80 and 443 are directly accessible on the worker node's public IP without `NodePort` or `LoadBalancer` services.
+Istio auto-provisions the gateway data plane (Deployment + Service) for the `main-gateway` Gateway. This is a bare-metal cluster with no cloud LoadBalancer controller, so the `gateway-config` chart adds a companion `Service` (`main-gateway-external`) of type `ClusterIP` with `spec.externalIPs` set to the worker node's public IP. kube-proxy then routes `<node-IP>:80` and `:443` straight to the gateway pods — no `NodePort` or cloud `LoadBalancer` required.
 
 ## ExternalDNS
 
@@ -127,7 +131,7 @@ cert-manager:
 1. Creates a `_acme-challenge.easysolution.work` TXT record via Cloudflare API
 2. Let's Encrypt verifies the record
 3. Certificate is issued and stored in `wildcard-tls` Secret
-4. The NGINX Gateway references this Secret for TLS termination
+4. The Istio Gateway references this Secret for TLS termination
 5. cert-manager automatically renews the certificate before expiry
 
 ### Certificate Lifecycle
@@ -138,7 +142,7 @@ flowchart LR
     Order -->|"DNS-01"| Challenge["Cloudflare<br/>TXT Record"]
     Challenge -->|"verified"| Cert["TLS Certificate"]
     Cert -->|"stored in"| Secret["wildcard-tls<br/>Secret"]
-    Secret -->|"mounted by"| GW["NGINX Gateway"]
+    Secret -->|"mounted by"| GW["Istio Gateway"]
 ```
 
 ## Hostname Pattern

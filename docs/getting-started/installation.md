@@ -87,7 +87,7 @@ kubectl apply -f argocd/${ENV}/application-root.yaml
 
 | Root | Applications |
 |------|--------------|
-| **root-infra** (BasePlate-Infra) | gateway, nginx-gateway-fabric, monitoring, kube-prometheus-stack, metrics-server, cert-manager, external-dns, registry, argocd-config |
+| **root-infra** (BasePlate-Infra) | gateway-config, istio, monitoring, kube-prometheus-stack, metrics-server, cert-manager, external-dns, registry, argocd-config |
 | **root-platform** (BasePlate) | Platform application (CRD + Operator) |
 
 ## Step 5: Configure Worker Nodes
