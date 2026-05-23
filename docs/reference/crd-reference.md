@@ -130,6 +130,7 @@ traffic:
 | Setting | Value |
 |---|---|
 | `consecutive5xxErrors` | 5 |
+| `consecutiveGatewayErrors` | 3 |
 | `interval` | 10s |
 | `baseEjectionTime` | 30s |
 | `maxEjectionPercent` | 50 |

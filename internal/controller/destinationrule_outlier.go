@@ -73,10 +73,11 @@ func buildTrafficPolicy(bs *deployv1alpha1.BirService) map[string]interface{} {
 	// Outlier detection: on by default for mesh workloads, opt-out via ejectUnhealthy: false.
 	if bs.Spec.Traffic.EjectUnhealthy == nil || *bs.Spec.Traffic.EjectUnhealthy {
 		policy["outlierDetection"] = map[string]interface{}{
-			"consecutive5xxErrors": int64(5),
-			"interval":             "10s",
-			"baseEjectionTime":     "30s",
-			"maxEjectionPercent":   int64(50),
+			"consecutive5xxErrors":     int64(5),
+			"consecutiveGatewayErrors": int64(3),
+			"interval":                 "10s",
+			"baseEjectionTime":         "30s",
+			"maxEjectionPercent":       int64(50),
 		}
 	}
 
