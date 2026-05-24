@@ -216,7 +216,7 @@ One DR per service. `reconcileDestinationRule` adds sections only when enabled:
 
 | Field | Section added when | Content |
 |---|---|---|
-| `outlierDetection` | `ejectUnhealthy != false` (default true) | 5 consecutive 5xx or 3 consecutive gateway errors (502/503/504) → 30s eject, max 50% of pods |
+| `outlierDetection` | `ejectUnhealthy != false` (default true) | 5 consecutive 5xx or 3 consecutive gateway errors (502/503/504) → 30s eject, max 50% of pods, panic mode disabled (minHealthPercent: 0) |
 | `loadBalancer` | `latencyAware: true` | `simple: LEAST_REQUEST` |
 
 When no section is needed, the DR is deleted entirely.

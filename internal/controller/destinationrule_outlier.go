@@ -78,6 +78,7 @@ func buildTrafficPolicy(bs *deployv1alpha1.BirService) map[string]interface{} {
 			"interval":                 "10s",
 			"baseEjectionTime":         "30s",
 			"maxEjectionPercent":       int64(50),
+			"minHealthPercent":         int64(0),
 		}
 	}
 

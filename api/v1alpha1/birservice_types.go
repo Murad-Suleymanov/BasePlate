@@ -126,7 +126,8 @@ type TrafficSpec struct {
 	// EjectUnhealthy controls whether failing pods are temporarily removed from the
 	// load-balancing pool by the waypoint Envoy (Istio outlier detection). Default true
 	// with platform-managed thresholds (5 consecutive 5xx or 3 consecutive gateway
-	// errors 502/503/504 → 30s eject, max 50% of pods).
+	// errors 502/503/504 → 30s eject, max 50% of pods, minHealthPercent: 0 so panic
+	// mode never sends traffic back to ejected pods).
 	// Set false to disable for workloads that legitimately return 5xx (e.g. webhook
 	// endpoints, batch processors). No tuning knobs by design.
 	EjectUnhealthy *bool `json:"ejectUnhealthy,omitempty"`

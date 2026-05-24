@@ -174,7 +174,8 @@ traffic:
       burst: 20
   # Outlier detection: failing pods temporarily removed from LB pool.
   # Default true (5 consecutive 5xx or 3 consecutive gateway errors
-  # 502/503/504 → 30s eject, max 50% of pods).
+  # 502/503/504 → 30s eject, max 50% of pods, panic mode disabled
+  # so ejected pods never receive traffic again until ejection expires).
   # Set false for apps that legitimately return 5xx (webhooks, batch).
   ejectUnhealthy: true
   # Load balancer. Default false → round-robin.
@@ -356,7 +357,7 @@ Token bucket: `max_tokens = requestsPerSecond + burst`, refills `requestsPerSeco
 
 Toggle for Istio outlier detection (failing endpoints removed from LB pool):
 
-- `true` / omitted → enabled with platform defaults (5 consecutive 5xx or 3 consecutive gateway errors (502/503/504) → 30s eject, max 50% of pods).
+- `true` / omitted → enabled with platform defaults (5 consecutive 5xx or 3 consecutive gateway errors (502/503/504) → 30s eject, max 50% of pods, panic mode disabled via `minHealthPercent: 0`).
 - `false` → disabled. Use for workloads that *legitimately* return 5xx (webhook endpoints, batch processors with retries). The lint emits a notice when disabled.
 
 No tuning knobs by design — the thresholds are platform-managed.

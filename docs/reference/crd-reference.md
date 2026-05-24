@@ -134,6 +134,7 @@ traffic:
 | `interval` | 10s |
 | `baseEjectionTime` | 30s |
 | `maxEjectionPercent` | 50 |
+| `minHealthPercent` | 0 (panic mode disabled — ejected hosts never re-receive traffic) |
 
 `latencyAware: true` sets `trafficPolicy.loadBalancer.simple = LEAST_REQUEST` in the DestinationRule. When omitted/false the field isn't set and Istio's default (ROUND_ROBIN) applies.
 
