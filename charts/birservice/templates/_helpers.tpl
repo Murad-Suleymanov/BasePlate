@@ -115,24 +115,23 @@ shutdown:
 
 {{/*
 Detect whether values are multi-instance shape.
-Returns "true" if no top-level operational keys (hpa, resources, image, etc.) are present
-AND at least one top-level value is a map (the instance config). Otherwise "false".
+Returns "true" if any top-level key is a map AND is not a known operational or
+service-level field. Defaults in values.yaml always provide hpa, resources, etc.,
+so presence of a known key cannot signal single-instance — only the presence of
+an UNKNOWN map key (the instance name) signals multi-instance.
 
 Uses a dict for state because Go template `range` creates a new variable scope —
-direct `$var = ...` assignments inside `range` don't persist outside in Helm.
+direct `$var = ...` assignments inside `range` don't reliably persist outside.
 */}}
 {{- define "birservice.isMultiInstance" -}}
-{{- $opKeys := list "hpa" "resources" "replicas" "image" "tag" "dockerfile" "imageTag" "traffic" "readinessProbe" "livenessProbe" "port" "containerPort" "hostname" "expose" "metrics" "canary" "singleton" "maxDown" "shutdown" -}}
-{{- $serviceKeys := list "repo" "owner" "image" "tag" "dockerfile" "imageTag" "name" -}}
-{{- $state := dict "hasOp" false "hasInstance" false -}}
+{{- $knownKeys := list "name" "owner" "image" "repo" "tag" "imageTag" "dockerfile" "port" "containerPort" "replicas" "hpa" "resources" "hostname" "expose" "metrics" "traffic" "readinessProbe" "livenessProbe" "singleton" "maxDown" "shutdown" "canary" "injectPipeline" -}}
+{{- $state := dict "hasInstance" false -}}
 {{- range $k, $val := . -}}
-  {{- if has $k $opKeys -}}
-    {{- $_ := set $state "hasOp" true -}}
-  {{- else if and (not (has $k $serviceKeys)) (kindIs "map" $val) -}}
+  {{- if and (not (has $k $knownKeys)) (kindIs "map" $val) -}}
     {{- $_ := set $state "hasInstance" true -}}
   {{- end -}}
 {{- end -}}
-{{- if and (not $state.hasOp) $state.hasInstance -}}true{{- else -}}false{{- end -}}
+{{- if $state.hasInstance -}}true{{- else -}}false{{- end -}}
 {{- end -}}
 
 {{/*

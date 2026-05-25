@@ -27,9 +27,12 @@
 {{- range $k := list "image" "repo" "tag" "imageTag" "dockerfile" -}}
   {{- if hasKey $.Values $k -}}{{- $_ := set $shared $k (index $.Values $k) -}}{{- end -}}
 {{- end -}}
-{{- $serviceKeys := list "repo" "owner" "image" "tag" "dockerfile" "imageTag" "name" -}}
+{{- /* Known keys: all chart-defined fields. Anything outside this list AND is a map */}}
+{{- /* is treated as an instance name. Defaults in values.yaml use known keys, so they */}}
+{{- /* don't get mistaken for instances. */ -}}
+{{- $knownKeys := list "name" "owner" "image" "repo" "tag" "imageTag" "dockerfile" "port" "containerPort" "replicas" "hpa" "resources" "hostname" "expose" "metrics" "traffic" "readinessProbe" "livenessProbe" "singleton" "maxDown" "shutdown" "canary" "injectPipeline" -}}
 {{- range $instanceName, $instanceCfg := .Values -}}
-{{- if and (not (has $instanceName $serviceKeys)) (kindIs "map" $instanceCfg) }}
+{{- if and (not (has $instanceName $knownKeys)) (kindIs "map" $instanceCfg) }}
 {{- /* Merge shared service-level fields into per-instance dict (instance wins on conflict). */ -}}
 {{- $merged := merge (deepCopy $instanceCfg) $shared }}
 ---
