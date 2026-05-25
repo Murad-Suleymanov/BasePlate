@@ -117,21 +117,22 @@ shutdown:
 Detect whether values are multi-instance shape.
 Returns "true" if no top-level operational keys (hpa, resources, image, etc.) are present
 AND at least one top-level value is a map (the instance config). Otherwise "false".
+
+Uses a dict for state because Go template `range` creates a new variable scope —
+direct `$var = ...` assignments inside `range` don't persist outside in Helm.
 */}}
 {{- define "birservice.isMultiInstance" -}}
 {{- $opKeys := list "hpa" "resources" "replicas" "image" "tag" "dockerfile" "imageTag" "traffic" "readinessProbe" "livenessProbe" "port" "containerPort" "hostname" "expose" "metrics" "canary" "singleton" "maxDown" "shutdown" -}}
-{{- $hasOp := false -}}
-{{- range $k, $_ := . -}}
-  {{- if has $k $opKeys -}}{{- $hasOp = true -}}{{- end -}}
-{{- end -}}
-{{- $hasInstance := false -}}
-{{- if not $hasOp -}}
-  {{- $serviceKeys := list "repo" "owner" "image" "tag" "dockerfile" "imageTag" "name" -}}
-  {{- range $k, $val := . -}}
-    {{- if and (not (has $k $serviceKeys)) (kindIs "map" $val) -}}{{- $hasInstance = true -}}{{- end -}}
+{{- $serviceKeys := list "repo" "owner" "image" "tag" "dockerfile" "imageTag" "name" -}}
+{{- $state := dict "hasOp" false "hasInstance" false -}}
+{{- range $k, $val := . -}}
+  {{- if has $k $opKeys -}}
+    {{- $_ := set $state "hasOp" true -}}
+  {{- else if and (not (has $k $serviceKeys)) (kindIs "map" $val) -}}
+    {{- $_ := set $state "hasInstance" true -}}
   {{- end -}}
 {{- end -}}
-{{- if and (not $hasOp) $hasInstance -}}true{{- else -}}false{{- end -}}
+{{- if and (not $state.hasOp) $state.hasInstance -}}true{{- else -}}false{{- end -}}
 {{- end -}}
 
 {{/*
