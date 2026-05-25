@@ -5,11 +5,74 @@ Complete reference for the developer-facing tenant `values.yaml` that produces a
 ## File Location
 
 ```
-BasePlate-Dev/<service_name>/<namespace_name>.yaml
+BasePlate-Dev/<service_name>/service.yaml      # shared service metadata
+BasePlate-Dev/<service_name>/<namespace>.yaml  # per-environment config
 ```
 
 - `<service_name>` — the service name (folder name)
-- `<namespace_name>` — the Kubernetes namespace (filename without `.yaml`, e.g., `dev`, `prod`, `stage`)
+- `service.yaml` — service-level fields shared by all environments (`repo`, `owner`, optionally `image`/`tag`/`dockerfile`)
+- `<namespace>.yaml` — environment-specific operational config (filename = Kubernetes namespace, e.g., `dev`, `prod`, `stage`)
+
+The ApplicationSet loads `service.yaml` first, then merges the environment file on top (env wins on conflict). `service.yaml` is optional but recommended — when absent, all fields must live in the env files.
+
+## Service-level vs environment-level
+
+| Lives in `service.yaml` | Lives in `<env>.yaml` |
+|---|---|
+| `repo`, `image`, `tag`, `dockerfile`, `imageTag` (image source) | `hpa`, `resources`, `replicas` (sizing) |
+| `owner` (ownership metadata) | `traffic`, `canary`, `readinessProbe`, `livenessProbe` (per-env tuning) |
+| `name` (optional override) | `singleton`, `maxDown`, `shutdown` |
+
+`service.yaml` typically looks like:
+
+```yaml
+repo: https://github.com/your-org/api
+owner: platform-team
+```
+
+## Single-instance vs Multi-instance
+
+A service can have ONE deployment per environment (default, single-instance) or **multiple deployments per environment** (multi-instance) — useful for read replicas, primary/standby workers, or split front/back roles that share the same image.
+
+### Single-instance (default)
+
+`<env>.yaml` has operational keys at the root:
+
+```yaml
+hpa:
+  minReplicas: 1
+  maxReplicas: 3
+resources: {...}
+traffic: {...}
+```
+
+→ Creates **one** BirService named `<service_name>`, Service DNS `<service_name>-svc.<namespace>.svc.cluster.local`.
+
+### Multi-instance
+
+`<env>.yaml` has instance names at the root, each containing its own operational config:
+
+```yaml
+main:
+  hpa:
+    minReplicas: 1
+    maxReplicas: 2
+  resources: {...}
+  traffic: {...}
+
+slave:
+  hpa:
+    minReplicas: 1
+    maxReplicas: 2
+  resources: {...}
+  traffic: {...}
+```
+
+→ Creates **N** BirServices named `<service_name>-<instance>` (e.g. `hello-csharp-main`, `hello-csharp-slave`), each with its own Service DNS `<service_name>-<instance>-svc.<namespace>.svc.cluster.local`.
+
+Shared service-level fields (`repo`, `image`, `tag`, …) come from `service.yaml` and are inherited by every instance unless the instance overrides them.
+
+**Shape detection is automatic**: if the root has any operational key (`hpa`, `resources`, `traffic`, …), it's single-instance; otherwise it's multi-instance (and every map at the root becomes an instance).
 
 ## Editor Setup
 

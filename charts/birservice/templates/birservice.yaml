@@ -1,115 +1,68 @@
+{{- /*
+  This template emits either one BirService (single-instance, legacy shape) or N
+  BirServices (multi-instance shape, one per top-level instance key).
+
+  Single shape — values root has operational keys directly (hpa, resources, ...):
+      hpa: {minReplicas: 1, maxReplicas: 3}
+      resources: {...}
+      → BirService named {{ .Release.Name }}
+
+  Multi shape — values root has instance maps under arbitrary names, plus shared
+  service-level fields (repo, owner) at root:
+      repo: ...
+      owner: ...
+      main:  {hpa: ..., resources: ..., traffic: ...}
+      slave: {hpa: ..., resources: ..., traffic: ...}
+      → BirServices named {{ .Release.Name }}-main, {{ .Release.Name }}-slave
+
+  Service-level fields (image, repo, tag, imageTag, dockerfile) are inherited by
+  each instance unless the instance overrides them.
+*/ -}}
+{{- $isMulti := eq (include "birservice.isMultiInstance" .Values) "true" -}}
+{{- $owner := default "" .Values.owner | toString -}}
+
+{{- if $isMulti -}}
+{{- /* Inherited service-level fields propagate to each instance. */ -}}
+{{- $shared := dict -}}
+{{- range $k := list "image" "repo" "tag" "imageTag" "dockerfile" -}}
+  {{- if hasKey $.Values $k -}}{{- $_ := set $shared $k (index $.Values $k) -}}{{- end -}}
+{{- end -}}
+{{- $serviceKeys := list "repo" "owner" "image" "tag" "dockerfile" "imageTag" "name" -}}
+{{- range $instanceName, $instanceCfg := .Values -}}
+{{- if and (not (has $instanceName $serviceKeys)) (kindIs "map" $instanceCfg) }}
+{{- /* Merge shared service-level fields into per-instance dict (instance wins on conflict). */ -}}
+{{- $merged := merge (deepCopy $instanceCfg) $shared }}
+---
+apiVersion: deploy.easydeploy.io/v1alpha1
+kind: BirService
+metadata:
+  name: {{ printf "%s-%s" $.Release.Name $instanceName | quote }}
+  namespace: {{ $.Release.Namespace | quote }}
+  labels:
+{{ include "birservice.labels" $ | indent 4 }}
+    deploy.easydeploy.io/instance: {{ $instanceName | quote }}
+{{- if $owner }}
+  annotations:
+    deploy.easydeploy.io/owner: {{ $owner | quote }}
+{{- end }}
+spec:
+{{ include "birservice.spec" $merged | indent 2 }}
+{{- end -}}
+{{- end -}}
+
+{{- else -}}
+---
 apiVersion: deploy.easydeploy.io/v1alpha1
 kind: BirService
 metadata:
   name: {{ default .Release.Name .Values.name | quote }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
-    app.kubernetes.io/managed-by: "argocd"
-    deploy.easydeploy.io/tenant: {{ .Release.Namespace | quote }}
+{{ include "birservice.labels" . | indent 4 }}
+{{- if $owner }}
+  annotations:
+    deploy.easydeploy.io/owner: {{ $owner | quote }}
+{{- end }}
 spec:
-{{- if .Values.image }}
-  image: {{ .Values.image | quote }}
-{{- end }}
-{{- if .Values.repo }}
-  repo: {{ .Values.repo | quote }}
-{{- end }}
-{{- if .Values.tag }}
-  tag: {{ .Values.tag | quote }}
-{{- end }}
-{{- if .Values.imageTag }}
-  imageTag: {{ .Values.imageTag | quote }}
-{{- end }}
-{{- if .Values.dockerfile }}
-  dockerfile: {{ .Values.dockerfile | quote }}
-{{- end }}
-{{- $hpa := .Values.hpa | default dict }}
-{{- $min := (get $hpa "minReplicas") | default 0 | int }}
-{{- $max := (get $hpa "maxReplicas") | default 0 | int }}
-{{- $replicasSet := or (kindIs "float64" .Values.replicas) (kindIs "int" .Values.replicas) }}
-{{- $useHPA := and (gt $min 0) (gt $max 0) (not $replicasSet) }}
-{{- $replicas := .Values.replicas | default 1 | int }}
-{{- if not $useHPA }}
-  replicas: {{ $replicas }}
-{{- end }}
-{{- if $useHPA }}
-  hpa:
-    minReplicas: {{ $min }}
-    maxReplicas: {{ $max }}
-{{- end }}
-{{- $resources := .Values.resources | default dict }}
-{{- $requests := (get $resources "requests") | default dict }}
-{{- $limits := (get $resources "limits") | default dict }}
-{{- $reqMem := ((get $requests "memory") | default "" | toString | trim) }}
-{{- $reqCPU := ((get $requests "cpu") | default "" | toString | trim) }}
-{{- $limMem := ((get $limits "memory") | default "" | toString | trim) }}
-{{- $limCPU := ((get $limits "cpu") | default "" | toString | trim) }}
-{{- if or $reqMem $reqCPU $limMem $limCPU }}
-  resources:
-{{- if or $reqMem $reqCPU }}
-    requests:
-{{- if $reqMem }}
-      memory: {{ $reqMem | quote }}
-{{- end }}
-{{- if $reqCPU }}
-      cpu: {{ $reqCPU | quote }}
-{{- end }}
-{{- end }}
-{{- if or $limMem $limCPU }}
-    limits:
-{{- if $limMem }}
-      memory: {{ $limMem | quote }}
-{{- end }}
-{{- if $limCPU }}
-      cpu: {{ $limCPU | quote }}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- if .Values.port }}
-  port: {{ .Values.port }}
-{{- end }}
-{{- if .Values.containerPort }}
-  containerPort: {{ .Values.containerPort }}
-{{- end }}
-{{- if .Values.hostname }}
-  hostname: {{ .Values.hostname | quote }}
-{{- end }}
-{{- if ne (default true .Values.expose) true }}
-  expose: false
-{{- end }}
-{{- /* Metrics default true — every component is scraped; set `metrics: false` to disable. */}}
-{{- if or (and (eq (kindOf .Values.metrics) "bool") .Values.metrics) (and (eq (kindOf .Values.metrics) "map") (ne false .Values.metrics.enabled)) }}
-  metrics:
-    enabled: true
-{{- if eq (kindOf .Values.metrics) "map" }}
-    path: {{ default "/metrics" .Values.metrics.path | quote }}
-{{- else }}
-    path: "/metrics"
-{{- end }}
-{{- end }}
-{{- if .Values.traffic }}
-  traffic:
-{{ toYaml .Values.traffic | nindent 4 }}
-{{- end }}
-{{- if .Values.canary }}
-  canary:
-{{ toYaml .Values.canary | nindent 4 }}
-{{- end }}
-{{- if .Values.readinessProbe }}
-  readinessProbe:
-{{ toYaml .Values.readinessProbe | nindent 4 }}
-{{- end }}
-{{- if .Values.livenessProbe }}
-  livenessProbe:
-{{ toYaml .Values.livenessProbe | nindent 4 }}
-{{- end }}
-{{- if hasKey .Values "singleton" }}
-  singleton: {{ .Values.singleton }}
-{{- end }}
-{{- if hasKey .Values "maxDown" }}
-  maxDown: {{ .Values.maxDown }}
-{{- end }}
-{{- if .Values.shutdown }}
-  shutdown:
-{{ toYaml .Values.shutdown | nindent 4 }}
-{{- end }}
-
+{{ include "birservice.spec" .Values | indent 2 }}
+{{- end -}}

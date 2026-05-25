@@ -1,0 +1,143 @@
+{{/*
+Render the spec body of a BirService CR from a values map. Used by birservice.yaml
+for both single-instance (values root) and multi-instance (per-instance map) cases.
+
+Input: a dict with the per-workload fields (image, repo, hpa, resources, traffic, …).
+Output: YAML for `spec:` — without the `spec:` key itself; the caller controls indent.
+*/}}
+{{- define "birservice.spec" -}}
+{{- $v := . -}}
+{{- if $v.image }}
+image: {{ $v.image | quote }}
+{{- end }}
+{{- if $v.repo }}
+repo: {{ $v.repo | quote }}
+{{- end }}
+{{- if $v.tag }}
+tag: {{ $v.tag | quote }}
+{{- end }}
+{{- if $v.imageTag }}
+imageTag: {{ $v.imageTag | quote }}
+{{- end }}
+{{- if $v.dockerfile }}
+dockerfile: {{ $v.dockerfile | quote }}
+{{- end }}
+{{- $hpa := $v.hpa | default dict }}
+{{- $min := (get $hpa "minReplicas") | default 0 | int }}
+{{- $max := (get $hpa "maxReplicas") | default 0 | int }}
+{{- $replicasSet := or (kindIs "float64" $v.replicas) (kindIs "int" $v.replicas) }}
+{{- $useHPA := and (gt $min 0) (gt $max 0) (not $replicasSet) }}
+{{- $replicas := $v.replicas | default 1 | int }}
+{{- if not $useHPA }}
+replicas: {{ $replicas }}
+{{- end }}
+{{- if $useHPA }}
+hpa:
+  minReplicas: {{ $min }}
+  maxReplicas: {{ $max }}
+{{- end }}
+{{- $resources := $v.resources | default dict }}
+{{- $requests := (get $resources "requests") | default dict }}
+{{- $limits := (get $resources "limits") | default dict }}
+{{- $reqMem := ((get $requests "memory") | default "" | toString | trim) }}
+{{- $reqCPU := ((get $requests "cpu") | default "" | toString | trim) }}
+{{- $limMem := ((get $limits "memory") | default "" | toString | trim) }}
+{{- $limCPU := ((get $limits "cpu") | default "" | toString | trim) }}
+{{- if or $reqMem $reqCPU $limMem $limCPU }}
+resources:
+{{- if or $reqMem $reqCPU }}
+  requests:
+{{- if $reqMem }}
+    memory: {{ $reqMem | quote }}
+{{- end }}
+{{- if $reqCPU }}
+    cpu: {{ $reqCPU | quote }}
+{{- end }}
+{{- end }}
+{{- if or $limMem $limCPU }}
+  limits:
+{{- if $limMem }}
+    memory: {{ $limMem | quote }}
+{{- end }}
+{{- if $limCPU }}
+    cpu: {{ $limCPU | quote }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if $v.port }}
+port: {{ $v.port }}
+{{- end }}
+{{- if $v.containerPort }}
+containerPort: {{ $v.containerPort }}
+{{- end }}
+{{- if $v.hostname }}
+hostname: {{ $v.hostname | quote }}
+{{- end }}
+{{- if ne (default true $v.expose) true }}
+expose: false
+{{- end }}
+{{- if or (and (eq (kindOf $v.metrics) "bool") $v.metrics) (and (eq (kindOf $v.metrics) "map") (ne false $v.metrics.enabled)) }}
+metrics:
+  enabled: true
+{{- if eq (kindOf $v.metrics) "map" }}
+  path: {{ default "/metrics" $v.metrics.path | quote }}
+{{- else }}
+  path: "/metrics"
+{{- end }}
+{{- end }}
+{{- if $v.traffic }}
+traffic:
+{{ toYaml $v.traffic | indent 2 }}
+{{- end }}
+{{- if $v.canary }}
+canary:
+{{ toYaml $v.canary | indent 2 }}
+{{- end }}
+{{- if $v.readinessProbe }}
+readinessProbe:
+{{ toYaml $v.readinessProbe | indent 2 }}
+{{- end }}
+{{- if $v.livenessProbe }}
+livenessProbe:
+{{ toYaml $v.livenessProbe | indent 2 }}
+{{- end }}
+{{- if hasKey $v "singleton" }}
+singleton: {{ $v.singleton }}
+{{- end }}
+{{- if hasKey $v "maxDown" }}
+maxDown: {{ $v.maxDown }}
+{{- end }}
+{{- if $v.shutdown }}
+shutdown:
+{{ toYaml $v.shutdown | indent 2 }}
+{{- end }}
+{{- end -}}
+
+{{/*
+Detect whether values are multi-instance shape.
+Returns "true" if no top-level operational keys (hpa, resources, image, etc.) are present
+AND at least one top-level value is a map (the instance config). Otherwise "false".
+*/}}
+{{- define "birservice.isMultiInstance" -}}
+{{- $opKeys := list "hpa" "resources" "replicas" "image" "tag" "dockerfile" "imageTag" "traffic" "readinessProbe" "livenessProbe" "port" "containerPort" "hostname" "expose" "metrics" "canary" "singleton" "maxDown" "shutdown" -}}
+{{- $hasOp := false -}}
+{{- range $k, $_ := . -}}
+  {{- if has $k $opKeys -}}{{- $hasOp = true -}}{{- end -}}
+{{- end -}}
+{{- $hasInstance := false -}}
+{{- if not $hasOp -}}
+  {{- $serviceKeys := list "repo" "owner" "image" "tag" "dockerfile" "imageTag" "name" -}}
+  {{- range $k, $val := . -}}
+    {{- if and (not (has $k $serviceKeys)) (kindIs "map" $val) -}}{{- $hasInstance = true -}}{{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- if and (not $hasOp) $hasInstance -}}true{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{/*
+Common labels for the BirService CR. Owner is propagated as both label (sanitized) and annotation (raw).
+*/}}
+{{- define "birservice.labels" -}}
+app.kubernetes.io/managed-by: "argocd"
+deploy.easydeploy.io/tenant: {{ .Release.Namespace | quote }}
+{{- end -}}
