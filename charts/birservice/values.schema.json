@@ -4,12 +4,6 @@
   "description": "Schema for tenant values.yaml. Validated by Helm at install/template time and by IDEs (VSCode yaml-language-server reads charts/*/values.schema.json automatically). Single source of truth: extend BirServiceSpec → easy-deploy-platform CRD schema → regenerate this file. Supports two shapes: single-instance (operational keys at root) or multi-instance (instance maps at root + shared service-level keys like repo, owner).",
   "type": "object",
   "additionalProperties": true,
-  "patternProperties": {
-    "^(?!name$|owner$|image$|repo$|tag$|imageTag$|dockerfile$|port$|containerPort$|replicas$|hpa$|resources$|hostname$|expose$|metrics$|traffic$|readinessProbe$|livenessProbe$|singleton$|maxDown$|shutdown$|canary$|injectPipeline$).+$": {
-      "type": "object",
-      "description": "Multi-instance: any top-level key not in the known list is treated as an instance name (e.g. main, slave, worker). Each instance is itself a map of operational keys (hpa, resources, traffic, ...). Inherits service-level fields (repo, image) from the root unless overridden."
-    }
-  },
   "properties": {
     "name": {
       "type": "string",
