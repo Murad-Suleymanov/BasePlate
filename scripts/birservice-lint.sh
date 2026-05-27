@@ -173,6 +173,24 @@ lint_workload() {
 
   y() { yq "${prefix}$1 // $2" "$file"; }
 
+  # Catch typos inside instance maps too — additionalProperties: true at root
+  # means JSON Schema can't see them, and our root-level scan stops at the
+  # instance boundary. Walk each immediate child; warn on any name that
+  # isn't a KNOWN_KEY.
+  if [ -n "$prefix" ]; then
+    while read -r child; do
+      [ -z "$child" ] && continue
+      if ! is_known_key "$child"; then
+        suggestion=$(suggest_known_key "$child")
+        if [ -n "$suggestion" ]; then
+          error "[$label] unknown field '$child'. Did you mean '$suggestion'?"
+        else
+          error "[$label] unknown field '$child' — not declared in values.schema.json."
+        fi
+      fi
+    done < <(yq "${prefix} | keys | .[]" "$file" 2>/dev/null)
+  fi
+
   local singleton hpa_min hpa_max replicas image repo max_down traffic_present eject ratelimit_enabled
   local req_mem lim_mem req_cpu lim_cpu
 
