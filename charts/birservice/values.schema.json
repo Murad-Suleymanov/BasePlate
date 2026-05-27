@@ -3,7 +3,14 @@
   "title": "BirService chart values",
   "description": "Schema for tenant values.yaml. Validated by Helm at install/template time and by IDEs (VSCode yaml-language-server reads charts/*/values.schema.json automatically). Single source of truth: extend BirServiceSpec → easy-deploy-platform CRD schema → regenerate this file. Supports two shapes: single-instance (operational keys at root) or multi-instance (instance maps at root + shared service-level keys like repo, owner).",
   "type": "object",
-  "additionalProperties": true,
+  "additionalProperties": {
+    "$comment": "Multi-instance shape: any extra top-level key is treated as a deployable instance. Each instance MUST declare an image or repo so it knows what to deploy. This rule also catches typos at root level — e.g. 'trafcass: { provider: ... }' is rejected because the misspelled key has neither image nor repo. (Cannot use additionalProperties: false at root because multi-instance names are user-defined.)",
+    "type": "object",
+    "anyOf": [
+      { "required": ["image"] },
+      { "required": ["repo"] }
+    ]
+  },
   "properties": {
     "name": {
       "type": "string",
