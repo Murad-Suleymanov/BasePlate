@@ -3,7 +3,37 @@
   "title": "BirService chart values",
   "description": "Schema for tenant values.yaml. Validated by Helm at install/template time and by IDEs (VSCode yaml-language-server reads charts/*/values.schema.json automatically). Single source of truth: extend BirServiceSpec → easy-deploy-platform CRD schema → regenerate this file. Supports two shapes: single-instance (operational keys at root) or multi-instance (instance maps at root + shared service-level keys like repo, owner).",
   "type": "object",
-  "additionalProperties": true,
+  "additionalProperties": { "$ref": "#/$defs/instance" },
+  "$defs": {
+    "instance": {
+      "$comment": "Schema for a multi-instance entry (e.g. 'main:', 'slave:'). Mirrors the root schema minus service-level keys (name, owner). additionalProperties:false rejects typos like 'trafficc'. Required image/repo is NOT enforced because instances can inherit those from a sibling service.yaml.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image":          { "$ref": "#/properties/image" },
+        "repo":           { "$ref": "#/properties/repo" },
+        "tag":            { "$ref": "#/properties/tag" },
+        "imageTag":       { "$ref": "#/properties/imageTag" },
+        "dockerfile":     { "$ref": "#/properties/dockerfile" },
+        "port":           { "$ref": "#/properties/port" },
+        "containerPort":  { "$ref": "#/properties/containerPort" },
+        "replicas":       { "$ref": "#/properties/replicas" },
+        "hpa":            { "$ref": "#/properties/hpa" },
+        "resources":      { "$ref": "#/properties/resources" },
+        "hostname":       { "$ref": "#/properties/hostname" },
+        "expose":         { "$ref": "#/properties/expose" },
+        "metrics":        { "$ref": "#/properties/metrics" },
+        "traffic":        { "$ref": "#/properties/traffic" },
+        "readinessProbe": { "$ref": "#/properties/readinessProbe" },
+        "livenessProbe":  { "$ref": "#/properties/livenessProbe" },
+        "singleton":      { "$ref": "#/properties/singleton" },
+        "maxDown":        { "$ref": "#/properties/maxDown" },
+        "shutdown":       { "$ref": "#/properties/shutdown" },
+        "canary":         { "$ref": "#/properties/canary" },
+        "injectPipeline": { "$ref": "#/properties/injectPipeline" }
+      }
+    }
+  },
   "properties": {
     "name": {
       "type": "string",
