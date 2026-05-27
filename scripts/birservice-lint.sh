@@ -34,6 +34,20 @@ if ! command -v yq >/dev/null 2>&1; then
   exit 2
 fi
 
+# Resolve a usable Python 3 interpreter (Windows often only has `python`).
+PY=""
+for _cmd in python3 python; do
+  if command -v "$_cmd" >/dev/null 2>&1 && \
+     "$_cmd" -c "import sys; sys.exit(0 if sys.version_info[0] >= 3 else 1)" >/dev/null 2>&1; then
+    PY="$_cmd"
+    break
+  fi
+done
+if [ -z "$PY" ]; then
+  echo "python 3 is required (looked for python3, python)" >&2
+  exit 2
+fi
+
 errors=0
 note() { echo "::notice file=$file::$1"; }
 warn() { echo "::warning file=$file::$1"; }
@@ -75,12 +89,57 @@ is_known_key() {
   return 1
 }
 
-# Top-level keys whose value is a map AND name is not in KNOWN_KEYS → instances.
-mapfile -t instance_keys < <(yq 'keys | .[]' "$file" | while read -r k; do
+# Top-level keys whose value is a map AND name is not in KNOWN_KEYS → candidate instances.
+# A real instance must contain at least one KNOWN_KEY among its children (e.g., image,
+# repo, port). If none of its children are recognized, it is almost certainly a typo
+# of a known top-level key (e.g., "trafcas:" instead of "traffic:"). The JSON schema
+# cannot catch this because additionalProperties is true at root (required for the
+# multi-instance shape).
+mapfile -t unknown_map_keys < <(yq 'keys | .[]' "$file" | while read -r k; do
   is_known_key "$k" && continue
   kind=$(yq ".\"$k\" | type" "$file" 2>/dev/null || echo "")
   [ "$kind" = "!!map" ] && echo "$k"
 done)
+
+# Suggest the closest KNOWN_KEY for a typo (Levenshtein distance ≤ 3).
+suggest_known_key() {
+  "$PY" -c "
+import sys
+target = sys.argv[1]
+candidates = sys.argv[2:]
+def dl(a, b):
+    m, n = len(a), len(b)
+    dp = [[0]*(n+1) for _ in range(m+1)]
+    for i in range(m+1): dp[i][0] = i
+    for j in range(n+1): dp[0][j] = j
+    for i in range(1, m+1):
+        for j in range(1, n+1):
+            cost = 0 if a[i-1] == b[j-1] else 1
+            dp[i][j] = min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+cost)
+    return dp[m][n]
+best = min(candidates, key=lambda c: dl(target.lower(), c.lower()))
+if dl(target.lower(), best.lower()) <= 3:
+    print(best)
+" "$1" "${KNOWN_KEYS[@]}" 2>/dev/null
+}
+
+instance_keys=()
+for k in "${unknown_map_keys[@]}"; do
+  has_known_child=false
+  while read -r sub; do
+    if is_known_key "$sub"; then has_known_child=true; break; fi
+  done < <(yq ".\"$k\" | keys | .[]" "$file" 2>/dev/null)
+  if [ "$has_known_child" = "true" ]; then
+    instance_keys+=("$k")
+  else
+    suggestion=$(suggest_known_key "$k")
+    if [ -n "$suggestion" ]; then
+      error "unknown root key '$k' — none of its sub-keys are recognized. Did you mean '$suggestion'?"
+    else
+      error "unknown root key '$k' — none of its sub-keys are recognized as known fields. If this is meant to be a new instance, it must contain at least one of: ${KNOWN_KEYS[*]}."
+    fi
+  fi
+done
 
 lint_workload() {
   # Lint a single workload's fields. Args: yq_path_prefix (empty for root, ".name" for instance).
@@ -144,7 +203,7 @@ lint_workload() {
   fi
 
   quantity_to_bytes() {
-    python3 -c "
+    "$PY" -c "
 import re, sys
 s = sys.argv[1]
 m = re.match(r'^([0-9.]+)\s*([KMGTP]?i?)\$', s)
@@ -163,7 +222,7 @@ print(int(n*mult))
     fi
   fi
   quantity_cpu_to_milli() {
-    python3 -c "
+    "$PY" -c "
 import re, sys
 s = sys.argv[1]
 if s.endswith('m'):
