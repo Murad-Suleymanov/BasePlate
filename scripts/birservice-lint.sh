@@ -49,9 +49,34 @@ if [ -z "$PY" ]; then
 fi
 
 errors=0
-note() { echo "::notice file=$file::$1"; }
-warn() { echo "::warning file=$file::$1"; }
-error() { echo "::error file=$file::$1"; errors=$((errors+1)); }
+
+# Output format: GitHub Actions annotations in CI, human-readable in terminals.
+if [ -n "${GITHUB_ACTIONS:-}" ]; then
+  note()  { echo "::notice file=$file::$1"; }
+  warn()  { echo "::warning file=$file::$1"; }
+  error() { echo "::error file=$file::$1"; errors=$((errors+1)); }
+  summary_ok()  { echo "$file: OK"; }
+  summary_err() { echo "$file: $errors semantic error(s)"; }
+else
+  if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    C_RED=$'\033[31m'; C_YELLOW=$'\033[33m'; C_BLUE=$'\033[34m'
+    C_GREEN=$'\033[32m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'; C_RESET=$'\033[0m'
+  else
+    C_RED=""; C_YELLOW=""; C_BLUE=""; C_GREEN=""; C_BOLD=""; C_DIM=""; C_RESET=""
+  fi
+  _header_shown=0
+  _show_header() {
+    if [ "$_header_shown" -eq 0 ]; then
+      echo "${C_BOLD}${file}${C_RESET}"
+      _header_shown=1
+    fi
+  }
+  note()  { _show_header; echo "  ${C_BLUE}note${C_RESET}    $1"; }
+  warn()  { _show_header; echo "  ${C_YELLOW}warning${C_RESET} $1"; }
+  error() { _show_header; echo "  ${C_RED}error${C_RESET}   $1"; errors=$((errors+1)); }
+  summary_ok()  { echo "${C_GREEN}✓${C_RESET} ${C_DIM}${file}${C_RESET}"; }
+  summary_err() { echo "${C_RED}✗${C_RESET} ${file} ${C_DIM}— ${errors} error(s)${C_RESET}"; }
+fi
 
 base=$(basename "$file")
 
@@ -71,10 +96,10 @@ if [ "$base" = "service.yaml" ]; then
   fi
 
   if [ "$errors" -gt 0 ]; then
-    echo "$file: $errors semantic error(s)"
+    summary_err
     exit 1
   fi
-  echo "$file: OK"
+  summary_ok
   exit 0
 fi
 
@@ -250,7 +275,7 @@ else
 fi
 
 if [ "$errors" -gt 0 ]; then
-  echo "$file: $errors semantic error(s)"
+  summary_err
   exit 1
 fi
-echo "$file: OK"
+summary_ok
