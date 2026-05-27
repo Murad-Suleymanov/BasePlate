@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Pre-commit wrapper around birservice-lint.sh — pre-commit hands the hook all matching
 # staged files in one invocation; the underlying lint script takes one file at a time.
 set -euo pipefail

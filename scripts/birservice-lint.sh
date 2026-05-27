@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Semantic (cross-field) validation for BirService tenant values.yaml.
 # JSON Schema (values.schema.json) catches structural errors (typos, wrong types,
 # unknown fields). This script catches *combinations* that the schema can't express:

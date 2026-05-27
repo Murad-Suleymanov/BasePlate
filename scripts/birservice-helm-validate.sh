@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Pre-commit hook + CI helper: renders charts/birservice with each given values file.
 # Helm reads charts/birservice/values.schema.json automatically — catches structural
 # errors (typos, wrong types, unknown fields) and Go template errors.
