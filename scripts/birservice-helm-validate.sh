@@ -51,16 +51,46 @@ emit_annotations() {
   fi
 }
 
+render_one() {
+  # Render the chart with given values files. Returns 0 on success, captures stderr.
+  local primary="$1"
+  shift
+  local extra_args=("$@")
+  echo "rendering chart with $primary${extra_args[*]:+ + ${extra_args[*]}}..."
+  if err=$(helm template "$CHART_DIR" -f "$primary" "${extra_args[@]}" 2>&1 >/dev/null); then
+    return 0
+  else
+    emit_annotations "$primary" "$err"
+    echo "$err"
+    return 1
+  fi
+}
+
 fail=0
 for f in "$@"; do
-  echo "rendering chart with $f..."
-  if err=$(helm template "$CHART_DIR" -f "$f" 2>&1 >/dev/null); then
-    : # success
+  dir=$(dirname "$f")
+  base=$(basename "$f")
+
+  if [ "$base" = "service.yaml" ]; then
+    # service.yaml alone isn't a complete chart input — render with each sibling env file.
+    found_env=0
+    for env_f in "$dir"/dev.yaml "$dir"/prod.yaml; do
+      [ -f "$env_f" ] || continue
+      found_env=1
+      render_one "$f" -f "$env_f" || fail=1
+    done
+    if [ "$found_env" -eq 0 ]; then
+      # No sibling env file yet — render service.yaml alone so schema is still checked.
+      render_one "$f" || fail=1
+    fi
   else
-    emit_annotations "$f" "$err"
-    # full output for log
-    echo "$err"
-    fail=1
+    # dev.yaml / prod.yaml — include sibling service.yaml if present (service first, env wins).
+    service_f="$dir/service.yaml"
+    if [ -f "$service_f" ]; then
+      render_one "$service_f" -f "$f" || fail=1
+    else
+      render_one "$f" || fail=1
+    fi
   fi
 done
 exit $fail
