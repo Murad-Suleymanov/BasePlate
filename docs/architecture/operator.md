@@ -185,6 +185,19 @@ Strategy is a single domain knob — `spec.singleton`:
 
 A default TCP readiness probe is inserted on `containerPort` when the user does not declare `readinessProbe`. Without this, rolling updates would mark new pods Ready immediately on `Running`, causing premature old-pod termination while the new app is still initializing.
 
+## Pod Topology Spread
+
+Every Deployment gets a single **soft** topology spread constraint, platform-managed (no developer knob):
+
+```
+maxSkew: 1
+topologyKey: kubernetes.io/hostname
+whenUnsatisfiable: ScheduleAnyway
+labelSelector: <this workload's pods>
+```
+
+`ScheduleAnyway` (soft) is deliberate: it spreads a workload's pods across nodes when more than one schedulable node exists, but degrades to packing on a single node otherwise. On a one-worker cluster it is a no-op and never strands replicas as `Pending` or blocks HPA scale-up. A hard `DoNotSchedule` constraint would break scheduling the moment replicas exceed the node count, so the platform never uses it. When the cluster grows, new pods automatically prefer emptier nodes with no config change.
+
 ## Disruption Budget
 
 `PodDisruptionBudget.maxUnavailable` is derived from `spec.maxDown`:

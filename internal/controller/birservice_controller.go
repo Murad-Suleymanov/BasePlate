@@ -193,6 +193,20 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 			dep.Spec.ProgressDeadlineSeconds = int32Ptr(600)
 			dep.Spec.RevisionHistoryLimit = int32Ptr(5)
 
+			// Topology spread: best-effort distribution of this workload's pods across
+			// nodes. Soft (ScheduleAnyway) by design — on a single-node cluster it is a
+			// no-op and never blocks scheduling or HPA scale-up; once more nodes join,
+			// new pods prefer emptier nodes automatically. Hard (DoNotSchedule) would
+			// strand replicas as Pending on small clusters, so we never use it.
+			templateSpec.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{
+				{
+					MaxSkew:           1,
+					TopologyKey:       "kubernetes.io/hostname",
+					WhenUnsatisfiable: corev1.ScheduleAnyway,
+					LabelSelector:     &metav1.LabelSelector{MatchLabels: labels},
+				},
+			}
+
 			preStopSleep, drainBuffer := resolveShutdown(bs)
 			gracePeriod := int64(preStopSleep) + int64(drainBuffer)
 			templateSpec.TerminationGracePeriodSeconds = &gracePeriod
