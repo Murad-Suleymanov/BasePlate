@@ -124,12 +124,16 @@ type TrafficSpec struct {
 	RateLimit *RateLimitSpec `json:"rateLimit,omitempty"`
 
 	// EjectUnhealthy controls whether failing pods are temporarily removed from the
-	// load-balancing pool by the waypoint Envoy (Istio outlier detection). Default true
-	// with platform-managed thresholds (5 consecutive 5xx or 3 consecutive gateway
-	// errors 502/503/504 → 30s eject, max 50% of pods, minHealthPercent: 0 so panic
-	// mode never sends traffic back to ejected pods).
-	// Set false to disable for workloads that legitimately return 5xx (e.g. webhook
-	// endpoints, batch processors). No tuning knobs by design.
+	// load-balancing pool by the waypoint Envoy (Istio outlier detection). Default true.
+	// Two complementary mechanisms (both platform-managed, no per-service knobs):
+	//   - Statistical: eject pods whose success rate is ≥1.9σ below the fleet mean
+	//     over a 30s window. RPS-adaptive — fires only when ≥2 pods each have ≥100
+	//     requests in the window (~3 req/s minimum per pod).
+	//   - Hard-failure backstop: 3 consecutive 502/503/504 responses eject the pod
+	//     immediately; works for any RPS and single-pod deployments.
+	// Max 50% of pods ejected; minHealthPercent: 0 keeps panic mode off.
+	// Set false for workloads that legitimately return 5xx (webhook endpoints,
+	// batch processors with retries).
 	EjectUnhealthy *bool `json:"ejectUnhealthy,omitempty"`
 
 	// LatencyAware switches the load-balancer from round-robin (default) to least-request:

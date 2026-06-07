@@ -48,11 +48,11 @@ const (
 
 type BirServiceReconciler struct {
 	client.Client
-	Scheme       *runtime.Scheme
-	BaseDomain   string
-	TargetIP     string
-	RegistryURL  string
-	Environment  string
+	Scheme      *runtime.Scheme
+	BaseDomain  string
+	TargetIP    string
+	RegistryURL string
+	Environment string
 }
 
 func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res ctrl.Result, err error) {

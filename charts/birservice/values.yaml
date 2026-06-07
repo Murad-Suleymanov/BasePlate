@@ -48,9 +48,12 @@ metrics: true
 # For a minimal mesh opt-in with no extras: traffic: {}
 #
 # ejectUnhealthy: Istio outlier detection — temporarily removes failing pods
-# from the load-balancing pool. Default true when mesh is enabled
-# (5 consecutive 5xx or 3 consecutive gateway errors 502/503/504 →
-# 30s eject, max 50% of pods, panic mode disabled so ejected pods stay out).
+# from the load-balancing pool. Default true when mesh is enabled.
+# Detection is RPS-adaptive: statistical success-rate comparison ejects pods
+# that fall ≥1.9σ below the fleet mean (requires ≥2 pods with ≥100 req/30s
+# each). Hard-failure backstop: 3 consecutive 502/503/504 always triggers
+# ejection regardless of RPS or fleet size. Max 50% ejected, 30s base eject,
+# panic mode disabled so ejected pods stay out.
 # Set false for workloads that legitimately return 5xx (webhook receivers,
 # batch endpoints with retries):
 # traffic:

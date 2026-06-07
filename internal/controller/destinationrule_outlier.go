@@ -71,11 +71,23 @@ func buildTrafficPolicy(bs *deployv1alpha1.BirService) map[string]interface{} {
 	policy := map[string]interface{}{}
 
 	// Outlier detection: on by default for mesh workloads, opt-out via ejectUnhealthy: false.
+	//
+	// Two complementary mechanisms:
+	//   1. successRate* — statistical: eject pods whose success rate falls ≥1.9σ below
+	//      the fleet mean. Fires only when ≥2 hosts each have ≥100 req in the interval,
+	//      so it naturally adapts to service RPS without fixed counts.
+	//   2. consecutiveGatewayErrors — hard-failure backstop: eject a pod after 3 consecutive
+	//      502/503/504 responses. Works for any RPS and for single-pod deployments where
+	//      success-rate comparison is impossible.
 	if bs.Spec.Traffic.EjectUnhealthy == nil || *bs.Spec.Traffic.EjectUnhealthy {
 		policy["outlierDetection"] = map[string]interface{}{
-			"consecutive5xxErrors":     int64(5),
+			// Statistical success-rate ejection (RPS-adaptive).
+			"successRateMinimumHosts":  int64(2),   // need ≥2 pods to each meet the volume threshold
+			"successRateRequestVolume": int64(50),  // need ≥50 req/interval per pod (~1.7 req/s at 30s)
+			"successRateStdevFactor":   int64(1900), // 1.9σ below mean (Envoy default)
+			// Hard-failure backstop: pod is unreachable or overloaded (502/503/504).
 			"consecutiveGatewayErrors": int64(3),
-			"interval":                 "10s",
+			"interval":                 "30s",
 			"baseEjectionTime":         "30s",
 			"maxEjectionPercent":       int64(50),
 			"minHealthPercent":         int64(0),
