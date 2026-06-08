@@ -198,12 +198,18 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 			// no-op and never blocks scheduling or HPA scale-up; once more nodes join,
 			// new pods prefer emptier nodes automatically. Hard (DoNotSchedule) would
 			// strand replicas as Pending on small clusters, so we never use it.
+			//
+			// LabelSelector covers all pods of this service (all ReplicaSet versions).
+			// MatchLabelKeys (K8s 1.25+) would scope the spread to per-version ReplicaSets
+			// so rolling updates land evenly independently — not available with k8s.io/api
+			// v0.20; upgrade the dependency to enable it.
 			templateSpec.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{
 				{
 					MaxSkew:           1,
 					TopologyKey:       "kubernetes.io/hostname",
 					WhenUnsatisfiable: corev1.ScheduleAnyway,
 					LabelSelector:     &metav1.LabelSelector{MatchLabels: labels},
+					MatchLabelKeys:    []string{"pod-template-hash"},
 				},
 			}
 
@@ -220,7 +226,7 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 				},
 				Resources: resourceReqs,
 				Lifecycle: &corev1.Lifecycle{
-					PreStop: &corev1.Handler{
+					PreStop: &corev1.LifecycleHandler{
 						Exec: &corev1.ExecAction{
 							Command: []string{"/bin/sh", "-c", fmt.Sprintf("sleep %d", preStopSleep)},
 						},
@@ -235,7 +241,7 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 					probePort = *bs.Spec.ReadinessProbe.Port
 				}
 				container.ReadinessProbe = &corev1.Probe{
-					Handler: corev1.Handler{
+					ProbeHandler: corev1.ProbeHandler{
 						HTTPGet: &corev1.HTTPGetAction{
 							Path: bs.Spec.ReadinessProbe.Path,
 							Port: intstr.FromInt(int(probePort)),
@@ -251,7 +257,7 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 				// pods Ready as soon as the container is Running, causing premature old-pod
 				// termination while the new app is still initializing.
 				container.ReadinessProbe = &corev1.Probe{
-					Handler: corev1.Handler{
+					ProbeHandler: corev1.ProbeHandler{
 						TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt(int(containerPort))},
 					},
 					InitialDelaySeconds: 3,
@@ -266,7 +272,7 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 					probePort = *bs.Spec.LivenessProbe.Port
 				}
 				container.LivenessProbe = &corev1.Probe{
-					Handler: corev1.Handler{
+					ProbeHandler: corev1.ProbeHandler{
 						HTTPGet: &corev1.HTTPGetAction{
 							Path: bs.Spec.LivenessProbe.Path,
 							Port: intstr.FromInt(int(probePort)),
