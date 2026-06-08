@@ -28,6 +28,10 @@ const (
 	labelUseWaypoint       = "istio.io/use-waypoint"
 	dataplaneAmbient       = "ambient"
 	waypointName           = "waypoint"
+	// waypointOptionsCM is the ConfigMap referenced by the waypoint Gateway's
+	// spec.infrastructure.parametersRef. Its horizontalPodAutoscaler key carries the
+	// HPA spec Istio applies to the auto-generated waypoint Deployment.
+	waypointOptionsCM = "waypoint-options"
 )
 
 const (
@@ -118,20 +122,54 @@ func (r *BirServiceReconciler) meshNeedsRolloutForSidecar(ctx context.Context, b
 // deleted when no BirService needs it. Multiple BirServices in the same namespace share one
 // Gateway, so we count siblings before deleting. Istio spawns a waypoint Pod for the Gateway,
 // which handles L7 traffic and emits Zipkin trace spans.
+// Replica count is auto-computed on every reconcile: min=2 (HA floor),
+// max=meshServiceCount×2 (HPA ceiling). These are written into the waypoint-options
+// ConfigMap (horizontalPodAutoscaler key); the Gateway's spec.infrastructure.parametersRef
+// points Istio at it, and Istio applies the HPA to the auto-generated waypoint Deployment.
 func (r *BirServiceReconciler) reconcileWaypointGateway(ctx context.Context, bs *deployv1alpha1.BirService) error {
 	desired := bsNeedsWaypoint(bs) && bs.DeletionTimestamp.IsZero()
-	if desired {
-		return r.upsertWaypointGateway(ctx, bs.Namespace)
+	if !desired {
+		siblingsNeed, err := r.anySiblingNeedsWaypoint(ctx, bs)
+		if err != nil {
+			return fmt.Errorf("list BirServices in %s: %w", bs.Namespace, err)
+		}
+		if !siblingsNeed {
+			return r.deleteWaypointGateway(ctx, bs.Namespace)
+		}
+		// Siblings still need waypoint — fall through to upsert so replica count
+		// is recalculated now that this BirService is leaving the mesh.
 	}
-
-	siblingsNeed, err := r.anySiblingNeedsWaypoint(ctx, bs)
+	minR, maxR, err := r.computeWaypointReplicas(ctx, bs.Namespace)
 	if err != nil {
-		return fmt.Errorf("list BirServices in %s: %w", bs.Namespace, err)
+		return err
 	}
-	if siblingsNeed {
-		return nil
+	return r.upsertWaypointGateway(ctx, bs.Namespace, minR, maxR)
+}
+
+// computeWaypointReplicas returns (minReplicas, maxReplicas) for the waypoint Gateway.
+// minReplicas is always 2: the HA floor that keeps L7 traffic alive during a node drain.
+// maxReplicas = 2 × meshServiceCount (floor 4): gives the CPU-based HPA enough headroom
+// to scale proportionally to the number of services in the namespace. The actual replica
+// count at runtime is determined by Istio's HPA on CPU metrics — not by pod counts,
+// which would require knowing per-service RPS that we don't have statically.
+func (r *BirServiceReconciler) computeWaypointReplicas(ctx context.Context, namespace string) (minR, maxR int32, err error) {
+	var list deployv1alpha1.BirServiceList
+	if err := r.List(ctx, &list, client.InNamespace(namespace)); err != nil {
+		return 2, 4, fmt.Errorf("list BirServices for waypoint sizing: %w", err)
 	}
-	return r.deleteWaypointGateway(ctx, bs.Namespace)
+	meshCount := int32(0)
+	for i := range list.Items {
+		sib := &list.Items[i]
+		if bsNeedsWaypoint(sib) && sib.DeletionTimestamp.IsZero() {
+			meshCount++
+		}
+	}
+	minR = 2
+	maxR = meshCount * 2
+	if maxR < 4 {
+		maxR = 4
+	}
+	return minR, maxR, nil
 }
 
 // bsNeedsWaypoint returns true when this BirService's spec implies mesh intent
@@ -176,7 +214,12 @@ func waypointGatewayObject(namespace string) *unstructured.Unstructured {
 	return gw
 }
 
-func (r *BirServiceReconciler) upsertWaypointGateway(ctx context.Context, namespace string) error {
+func (r *BirServiceReconciler) upsertWaypointGateway(ctx context.Context, namespace string, minReplicas, maxReplicas int32) error {
+	// The ConfigMap must exist before the Gateway references it via parametersRef.
+	if err := r.upsertWaypointOptions(ctx, namespace, minReplicas, maxReplicas); err != nil {
+		return err
+	}
+
 	gw := waypointGatewayObject(namespace)
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, gw, func() error {
 		annotations := gw.GetAnnotations()
@@ -191,6 +234,16 @@ func (r *BirServiceReconciler) upsertWaypointGateway(ctx context.Context, namesp
 		if err := unstructured.SetNestedField(gw.Object, "istio-waypoint", "spec", "gatewayClassName"); err != nil {
 			return err
 		}
+		// parametersRef points Istio at the ConfigMap holding the HPA spec for the
+		// auto-generated waypoint Deployment. group "" = core (ConfigMap).
+		paramsRef := map[string]interface{}{
+			"group": "",
+			"kind":  "ConfigMap",
+			"name":  waypointOptionsCM,
+		}
+		if err := unstructured.SetNestedField(gw.Object, paramsRef, "spec", "infrastructure", "parametersRef"); err != nil {
+			return err
+		}
 		listeners := []interface{}{
 			map[string]interface{}{
 				"name":     "mesh",
@@ -203,11 +256,48 @@ func (r *BirServiceReconciler) upsertWaypointGateway(ctx context.Context, namesp
 	if err != nil {
 		return fmt.Errorf("upsert waypoint Gateway: %w", err)
 	}
-	log.FromContext(ctx).Info("waypoint Gateway upserted", "namespace", namespace)
+	log.FromContext(ctx).Info("waypoint Gateway upserted", "namespace", namespace, "minReplicas", minReplicas, "maxReplicas", maxReplicas)
+	return nil
+}
+
+// upsertWaypointOptions reconciles the ConfigMap referenced by the waypoint Gateway's
+// parametersRef. Istio reads the horizontalPodAutoscaler key and applies it to the
+// auto-generated waypoint Deployment (filling scaleTargetRef itself). We supply min/max
+// replicas plus a CPU utilization target so the waypoint scales on actual proxy load.
+func (r *BirServiceReconciler) upsertWaypointOptions(ctx context.Context, namespace string, minReplicas, maxReplicas int32) error {
+	hpaSpec := fmt.Sprintf(`spec:
+  minReplicas: %d
+  maxReplicas: %d
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 80
+`, minReplicas, maxReplicas)
+
+	cm := &corev1.ConfigMap{}
+	cm.Name = waypointOptionsCM
+	cm.Namespace = namespace
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
+		cm.Data = map[string]string{"horizontalPodAutoscaler": hpaSpec}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("upsert waypoint options ConfigMap: %w", err)
+	}
 	return nil
 }
 
 func (r *BirServiceReconciler) deleteWaypointGateway(ctx context.Context, namespace string) error {
+	cm := &corev1.ConfigMap{}
+	cm.Name = waypointOptionsCM
+	cm.Namespace = namespace
+	if err := r.Delete(ctx, cm); client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("delete waypoint options ConfigMap: %w", err)
+	}
+
 	gw := waypointGatewayObject(namespace)
 	if err := r.Delete(ctx, gw); err != nil {
 		if apierrors.IsNotFound(err) {
