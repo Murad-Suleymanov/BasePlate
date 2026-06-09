@@ -1120,11 +1120,110 @@ func (r *BirServiceReconciler) reconcileHPA(ctx context.Context, bs *deployv1alp
 	return err
 }
 
+// buildHTTPRouteRules constructs the HTTPRoute rules for a service.
+//   - The catch-all "/" rule routes to the service itself, split with the canary when active.
+//   - Shared-route members (parent role) each contribute either a dedicated PathPrefix rule
+//     (when PathPrefix is set) or a weighted backend joined onto the catch-all rule.
+//
+// When there are no path-based members, the original single-rule shape (no explicit match)
+// is preserved so standalone and canary services render exactly as before. Members share the
+// parent's Service port (children typically inheritFrom the parent).
+func buildHTTPRouteRules(svcName string, svcPort int32, canarySvcName string, canaryWeight int32, route *deployv1alpha1.RouteSpec) []interface{} {
+	catchAllBackends := []interface{}{
+		map[string]interface{}{
+			"name": svcName,
+			"port": int64(svcPort),
+		},
+	}
+	if canarySvcName != "" && canaryWeight > 0 {
+		stableWeight := int64(100 - canaryWeight)
+		if stableWeight < 0 {
+			stableWeight = 0
+		}
+		catchAllBackends = []interface{}{
+			map[string]interface{}{
+				"name":   svcName,
+				"port":   int64(svcPort),
+				"weight": stableWeight,
+			},
+			map[string]interface{}{
+				"name":   canarySvcName,
+				"port":   int64(svcPort),
+				"weight": int64(canaryWeight),
+			},
+		}
+	}
+
+	var memberRules []interface{}
+	if route != nil {
+		for _, m := range route.Members {
+			if m.Service == "" {
+				continue
+			}
+			if m.PathPrefix != "" {
+				memberRules = append(memberRules, map[string]interface{}{
+					"matches": []interface{}{
+						map[string]interface{}{
+							"path": map[string]interface{}{
+								"type":  "PathPrefix",
+								"value": m.PathPrefix,
+							},
+						},
+					},
+					"backendRefs": []interface{}{
+						map[string]interface{}{
+							"name": m.Service,
+							"port": int64(svcPort),
+						},
+					},
+				})
+				continue
+			}
+			weight := int64(0)
+			if m.Weight != nil {
+				weight = int64(*m.Weight)
+			}
+			catchAllBackends = append(catchAllBackends, map[string]interface{}{
+				"name":   m.Service,
+				"port":   int64(svcPort),
+				"weight": weight,
+			})
+		}
+	}
+
+	if len(memberRules) > 0 {
+		// Multi-rule shape: explicit path rules + a "/" catch-all. Gateway API prefers the
+		// longest matching path prefix, so rule order is not load-bearing.
+		rules := append([]interface{}{}, memberRules...)
+		return append(rules, map[string]interface{}{
+			"matches": []interface{}{
+				map[string]interface{}{
+					"path": map[string]interface{}{
+						"type":  "PathPrefix",
+						"value": "/",
+					},
+				},
+			},
+			"backendRefs": catchAllBackends,
+		})
+	}
+	// Default single-rule shape (unchanged for standalone/canary services).
+	return []interface{}{
+		map[string]interface{}{
+			"backendRefs": catchAllBackends,
+		},
+	}
+}
+
 func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deployv1alpha1.BirService, svcName string, svcPort int32, canaySvcName string, canaryWeight int32) error {
 	routeName := fmt.Sprintf("%s-route", bs.Name)
 	hostname := r.resolveHostname(bs)
 
-	if !exposeOrDefault(bs) || hostname == "" {
+	// A child (route.shareWith set) is reachable only through its parent's HTTPRoute,
+	// so it must not own a route of its own. Also drop the route when not exposed or
+	// no hostname resolves.
+	isChild := bs.Spec.Route != nil && bs.Spec.Route.ShareWith != ""
+	if isChild || !exposeOrDefault(bs) || hostname == "" {
 		existing := &unstructured.Unstructured{}
 		existing.SetGroupVersionKind(httpRouteGVK)
 		err := r.Get(ctx, types.NamespacedName{Name: routeName, Namespace: bs.Namespace}, existing)
@@ -1141,32 +1240,7 @@ func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deplo
 		route.SetNamespace(bs.Namespace)
 
 		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, route, func() error {
-			var backendRefs []interface{}
-			if canaySvcName != "" && canaryWeight > 0 {
-				stableWeight := int64(100 - canaryWeight)
-				if stableWeight < 0 {
-					stableWeight = 0
-				}
-				backendRefs = []interface{}{
-					map[string]interface{}{
-						"name":   svcName,
-						"port":   int64(svcPort),
-						"weight": stableWeight,
-					},
-					map[string]interface{}{
-						"name":   canaySvcName,
-						"port":   int64(svcPort),
-						"weight": int64(canaryWeight),
-					},
-				}
-			} else {
-				backendRefs = []interface{}{
-					map[string]interface{}{
-						"name": svcName,
-						"port": int64(svcPort),
-					},
-				}
-			}
+			rules := buildHTTPRouteRules(svcName, svcPort, canaySvcName, canaryWeight, bs.Spec.Route)
 
 			route.Object["spec"] = map[string]interface{}{
 				"parentRefs": []interface{}{
@@ -1182,11 +1256,7 @@ func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deplo
 					},
 				},
 				"hostnames": []interface{}{hostname},
-				"rules": []interface{}{
-					map[string]interface{}{
-						"backendRefs": backendRefs,
-					},
-				},
+				"rules":     rules,
 			}
 
 			route.SetLabels(mergeStringMap(route.GetLabels(), map[string]string{

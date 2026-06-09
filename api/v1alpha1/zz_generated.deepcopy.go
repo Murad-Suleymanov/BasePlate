@@ -78,6 +78,54 @@ func (in *BirServiceSpec) DeepCopyInto(out *BirServiceSpec) {
 		*out = new(ShutdownSpec)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.Route != nil {
+		in, out := &in.Route, &out.Route
+		*out = new(RouteSpec)
+		(*in).DeepCopyInto(*out)
+	}
+}
+
+func (in *RouteSpec) DeepCopyInto(out *RouteSpec) {
+	*out = *in
+	if in.Weight != nil {
+		in, out := &in.Weight, &out.Weight
+		*out = new(int32)
+		**out = **in
+	}
+	if in.Members != nil {
+		in, out := &in.Members, &out.Members
+		*out = make([]RouteMember, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+}
+
+func (in *RouteSpec) DeepCopy() *RouteSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(RouteSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *RouteMember) DeepCopyInto(out *RouteMember) {
+	*out = *in
+	if in.Weight != nil {
+		in, out := &in.Weight, &out.Weight
+		*out = new(int32)
+		**out = **in
+	}
+}
+
+func (in *RouteMember) DeepCopy() *RouteMember {
+	if in == nil {
+		return nil
+	}
+	out := new(RouteMember)
+	in.DeepCopyInto(out)
+	return out
 }
 
 func (in *ShutdownSpec) DeepCopyInto(out *ShutdownSpec) {

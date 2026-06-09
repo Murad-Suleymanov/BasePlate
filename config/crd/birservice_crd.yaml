@@ -221,6 +221,41 @@ spec:
                   format: int32
                   minimum: 0
                   description: Maximum pods that may go down simultaneously during voluntary disruptions (node drains, upgrades). Default floor(replicas/2). Set lower for latency-critical apps. 0 forbids voluntary disruption (blocks node drains).
+                route:
+                  type: object
+                  description: Shared-hostname routing across BirServices. Chart-populated from the tenant route block. child sets shareWith; parent gets members.
+                  properties:
+                    shareWith:
+                      type: string
+                      description: Full name of the parent BirService whose HTTPRoute/hostname to join. When set, this service creates no HTTPRoute of its own (child role).
+                    pathPrefix:
+                      type: string
+                      description: Path prefix under the shared host that routes to this child (e.g. /testing). Authoritative copy lives in the parent's members.
+                    weight:
+                      type: integer
+                      format: int32
+                      minimum: 0
+                      maximum: 100
+                      description: Optional weighted-split percentage on the shared host's catch-all rule (used when pathPrefix is empty).
+                    members:
+                      type: array
+                      description: Backends contributed by sharing children (parent role). Chart-populated.
+                      items:
+                        type: object
+                        required: [service]
+                        properties:
+                          service:
+                            type: string
+                            description: Child ClusterIP Service name (e.g. hello-csharp-testing-svc).
+                          pathPrefix:
+                            type: string
+                            description: When set, routes only this path prefix to the member (its own HTTPRoute rule).
+                          weight:
+                            type: integer
+                            format: int32
+                            minimum: 0
+                            maximum: 100
+                            description: When set and pathPrefix empty, adds the member as a weighted backend on the parent's catch-all rule.
             status:
               type: object
               properties:

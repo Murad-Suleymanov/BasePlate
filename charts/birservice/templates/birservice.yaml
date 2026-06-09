@@ -36,7 +36,48 @@
 {{- /* Known keys: all chart-defined fields. Anything outside this list AND is a map */}}
 {{- /* is treated as an instance name. Defaults in values.yaml use known keys, so they */}}
 {{- /* don't get mistaken for instances. */ -}}
-{{- $knownKeys := list "name" "owner" "image" "repo" "tag" "imageTag" "dockerfile" "port" "containerPort" "replicas" "hpa" "resources" "hostname" "expose" "metrics" "traffic" "readinessProbe" "livenessProbe" "singleton" "maxDown" "shutdown" "canary" "injectPipeline" -}}
+{{- $knownKeys := list "name" "owner" "image" "repo" "tag" "imageTag" "dockerfile" "port" "containerPort" "replicas" "hpa" "resources" "hostname" "expose" "metrics" "traffic" "readinessProbe" "livenessProbe" "singleton" "maxDown" "shutdown" "canary" "injectPipeline" "route" -}}
+{{- /* ── Shared-route pre-pass ──────────────────────────────────────────────
+       Build $routeMembers: parent instance name -> list of member dicts, from the
+       raw `route.shareWith` declared on child instances. References are validated
+       here so a bad shareWith fails the render with a clear message (same rules the
+       operator assumes). A child joins the parent's hostname; the parent emits one
+       HTTPRoute rule per member. */ -}}
+{{- $routeMembers := dict -}}
+{{- range $iname, $icfg := .Values -}}
+{{- if and (not (has $iname $knownKeys)) (kindIs "map" $icfg) -}}
+{{- $r := $icfg.route | default dict -}}
+{{- if $r.shareWith -}}
+  {{- $parent := $r.shareWith | toString -}}
+  {{- if eq $parent $iname -}}
+    {{- fail (printf "instance %q: route.shareWith cannot reference itself" $iname) -}}
+  {{- end -}}
+  {{- $parentCfg := index $.Values $parent -}}
+  {{- if or (has $parent $knownKeys) (not (kindIs "map" $parentCfg)) -}}
+    {{- fail (printf "instance %q: route.shareWith: %q is not a defined instance" $iname $parent) -}}
+  {{- end -}}
+  {{- $parentRoute := $parentCfg.route | default dict -}}
+  {{- if $parentRoute.shareWith -}}
+    {{- fail (printf "instance %q: route.shareWith target %q is itself a shared child (no chains)" $iname $parent) -}}
+  {{- end -}}
+  {{- if $icfg.hostname -}}
+    {{- fail (printf "instance %q: a shared child must not set its own hostname (host comes from %q)" $iname $parent) -}}
+  {{- end -}}
+  {{- $member := dict "service" (printf "%s-%s-svc" $.Release.Name $iname) -}}
+  {{- if $r.pathPrefix -}}
+    {{- if not (hasPrefix "/" ($r.pathPrefix | toString)) -}}
+      {{- fail (printf "instance %q: route.pathPrefix %q must start with '/'" $iname $r.pathPrefix) -}}
+    {{- end -}}
+    {{- $_ := set $member "pathPrefix" $r.pathPrefix -}}
+  {{- else if hasKey $r "weight" -}}
+    {{- $_ := set $member "weight" $r.weight -}}
+  {{- end -}}
+  {{- $list := get $routeMembers $parent | default list -}}
+  {{- $list = append $list $member -}}
+  {{- $_ := set $routeMembers $parent $list -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- range $instanceName, $instanceCfg := .Values -}}
 {{- if and (not (has $instanceName $knownKeys)) (kindIs "map" $instanceCfg) }}
 {{- /* Resolve `inheritFrom`: deep-merge this instance ON TOP OF the named sibling
@@ -62,6 +103,16 @@
 {{- $_ := unset $effective "inheritFrom" -}}
 {{- /* Merge shared service-level fields into the result (instance wins on conflict). */ -}}
 {{- $merged := merge $effective $shared }}
+{{- /* Resolve shared routing into the emitted spec: a child carries the parent's
+       full BirService name in route.shareWith (operator then skips its own route);
+       a parent carries the computed members. Drop any route that leaked via inheritFrom. */ -}}
+{{- $_ := unset $merged "route" -}}
+{{- $rawRoute := $instanceCfg.route | default dict -}}
+{{- if $rawRoute.shareWith -}}
+  {{- $_ := set $merged "route" (dict "shareWith" (printf "%s-%s" $.Release.Name ($rawRoute.shareWith | toString))) -}}
+{{- else if hasKey $routeMembers $instanceName -}}
+  {{- $_ := set $merged "route" (dict "members" (get $routeMembers $instanceName)) -}}
+{{- end }}
 ---
 apiVersion: deploy.easydeploy.io/v1alpha1
 kind: BirService

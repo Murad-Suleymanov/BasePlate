@@ -106,7 +106,7 @@ fi
 # ─── env-file validation: detect single vs multi-instance shape ─────────────
 KNOWN_KEYS=(name owner image repo tag imageTag dockerfile port containerPort replicas
             hpa resources hostname expose metrics traffic readinessProbe livenessProbe
-            singleton maxDown shutdown canary injectPipeline inheritFrom)
+            singleton maxDown shutdown canary injectPipeline inheritFrom route)
 
 is_known_key() {
   local k="$1"
@@ -345,6 +345,53 @@ for ik in "${instance_keys[@]}"; do
   fi
   if [ -n "$(read_inherit_from "$parent")" ]; then
     error "[instance '$ik'] inheritFrom target '$parent' must not itself use inheritFrom (no chains)."
+  fi
+done
+
+# ─── route.shareWith: cross-instance reference validation (multi-instance only) ──
+# A child joins a sibling's hostname via `route.shareWith: <name>` and may scope
+# itself with route.pathPrefix. The helm template enforces the same rules with a
+# hard fail; validating here gives line-anchored errors and typo suggestions.
+# Rules:
+#   - target must be a defined sibling instance in this file
+#   - no self-reference
+#   - no chains: the parent must not itself be a shared child
+#   - a child must not set its own hostname (host comes from the parent)
+#   - pathPrefix, if set, must start with "/"
+read_share_with() {
+  local v
+  v=$(yq ".\"$1\".route.shareWith // \"\"" "$file" 2>/dev/null)
+  case "$v" in ''|'""'|null) echo "" ;; *) echo "$v" ;; esac
+}
+
+for ik in "${instance_keys[@]}"; do
+  parent=$(read_share_with "$ik")
+  [ -z "$parent" ] && continue
+  if [ "$parent" = "$ik" ]; then
+    error "[instance '$ik'] route.shareWith cannot reference itself."
+    continue
+  fi
+  if ! is_instance_key "$parent"; then
+    suggestion=$(suggest_instance_key "$parent")
+    if [ -n "$suggestion" ]; then
+      error "[instance '$ik'] route.shareWith: '$parent' is not a defined instance. Did you mean '$suggestion'?"
+    else
+      error "[instance '$ik'] route.shareWith: '$parent' is not a defined instance. Available: ${instance_keys[*]}."
+    fi
+    continue
+  fi
+  if [ -n "$(read_share_with "$parent")" ]; then
+    error "[instance '$ik'] route.shareWith target '$parent' is itself a shared child (no chains)."
+  fi
+  child_host=$(yq ".\"$ik\".hostname // \"\"" "$file" 2>/dev/null)
+  case "$child_host" in ''|'""'|null) child_host="" ;; esac
+  if [ -n "$child_host" ]; then
+    error "[instance '$ik'] a shared child must not set its own hostname (host comes from '$parent')."
+  fi
+  path_prefix=$(yq ".\"$ik\".route.pathPrefix // \"\"" "$file" 2>/dev/null)
+  case "$path_prefix" in ''|'""'|null) path_prefix="" ;; esac
+  if [ -n "$path_prefix" ] && [ "${path_prefix#/}" = "$path_prefix" ]; then
+    error "[instance '$ik'] route.pathPrefix '$path_prefix' must start with '/'."
   fi
 done
 

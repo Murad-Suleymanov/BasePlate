@@ -100,6 +100,46 @@ Rules:
 - `inheritFrom` is resolution metadata only — it never appears in the rendered BirService spec.
 - Service-level fields from `service.yaml` (`repo`, `image`, …) still apply on top, with the instance/its parent winning on conflict.
 
+#### Share one hostname across instances (`route.shareWith`)
+
+By default each instance gets its **own** hostname (`<service>-<instance>-<env>.<baseDomain>`) and HTTPRoute. To put several instances behind **one** DNS name, a "child" instance joins a "parent" instance's route with `route.shareWith` and scopes itself with `route.pathPrefix`:
+
+```yaml
+main:
+  hpa: {minReplicas: 1, maxReplicas: 2}
+  resources: {...}
+  traffic: {...}
+
+testing:
+  inheritFrom: main        # same image/config as main
+  route:
+    shareWith: main        # join main's hostname instead of creating its own
+    pathPrefix: /testing    # only /testing reaches testing; everything else stays on main
+```
+
+This renders **one** HTTPRoute on the host `<service>-main-<env>.<baseDomain>` with two rules:
+
+```
+/testing  → <service>-testing-svc     # the child
+/         → <service>-main-svc        # the parent (catch-all)
+```
+
+Gateway API matches the **longest** path prefix first, so `/testing` wins over `/` regardless of order, and `main` keeps all other traffic (none is stolen).
+
+Variants:
+
+- **Weighted split** — omit `pathPrefix` and set `weight` instead. The child becomes a weighted backend on the parent's `/` rule (e.g. `weight: 10` → 10% of all traffic to the child). Use for blue/green or gradual cutover.
+- Multiple children may share the same parent (each adds its own rule/backend).
+
+Rules:
+
+- `shareWith` must name a defined sibling instance in the **same** file.
+- No chains and no self-reference: the parent must not itself use `route.shareWith`.
+- A child must **not** set its own `hostname` — the host comes from the parent.
+- `pathPrefix`, when set, must start with `/`.
+- The child still gets its own Deployment + Service; it just has **no HTTPRoute of its own** (reachable only through the shared host). Children share the parent's Service port (set it once on the parent — `inheritFrom` keeps them in sync).
+- This is distinct from `canary:` (a shadow variant of a single service); `route.shareWith` joins two **independent, standing** instances under one host.
+
 ## Editor Setup
 
 The chart ships a JSON schema (`charts/birservice/values.schema.json`) and a workspace VSCode binding so any `*/dev.yaml` / `*/prod.yaml` opened from BasePlate-Dev gets real-time validation:

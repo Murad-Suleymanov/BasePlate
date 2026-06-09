@@ -11,6 +11,17 @@
       "additionalProperties": false,
       "properties": {
         "inheritFrom":    { "type": "string", "minLength": 1, "description": "Inherit the full config of the named sibling instance (e.g. 'main'); fields declared here override the inherited ones (deep merge). The target instance must not itself use inheritFrom (no chains)." },
+        "route": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Join this instance to a sibling's shared hostname/HTTPRoute instead of creating its own. The named parent must be a sibling instance that does not itself use route.shareWith.",
+          "required": ["shareWith"],
+          "properties": {
+            "shareWith":  { "type": "string", "minLength": 1, "description": "Name of the sibling instance whose hostname to share (e.g. 'main')." },
+            "pathPrefix": { "type": "string", "pattern": "^/", "description": "Only this path prefix routes to this instance under the shared host (e.g. /testing). The parent serves everything else." },
+            "weight":     { "type": "integer", "minimum": 0, "maximum": 100, "description": "Weighted split percentage on the shared host's catch-all (used when pathPrefix is omitted)." }
+          }
+        },
         "image":          { "$ref": "#/properties/image" },
         "repo":           { "$ref": "#/properties/repo" },
         "tag":            { "$ref": "#/properties/tag" },

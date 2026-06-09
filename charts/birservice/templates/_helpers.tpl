@@ -111,6 +111,10 @@ maxDown: {{ $v.maxDown }}
 shutdown:
 {{ toYaml $v.shutdown | indent 2 }}
 {{- end }}
+{{- if $v.route }}
+route:
+{{ toYaml $v.route | indent 2 }}
+{{- end }}
 {{- end -}}
 
 {{/*

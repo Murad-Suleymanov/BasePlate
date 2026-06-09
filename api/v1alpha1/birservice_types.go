@@ -97,6 +97,46 @@ type BirServiceSpec struct {
 	// Shutdown tunes graceful termination. preStopSleepSeconds drains endpoints
 	// before SIGTERM; terminationGracePeriodSeconds is auto-derived as preStopSleep + 5.
 	Shutdown *ShutdownSpec `json:"shutdown,omitempty"`
+
+	// Route groups several BirServices under one shared hostname/HTTPRoute.
+	// Two roles, set by the chart from the tenant `route:` block:
+	//   - child: ShareWith = the full name of the parent BirService whose hostname to
+	//     join. A child does NOT create its own HTTPRoute; it is reached only through
+	//     the parent's route (via PathPrefix / Weight contributed as a member there).
+	//   - parent: Members = the extra backends contributed by sharing children. The
+	//     parent's HTTPRoute gets one rule per member plus its own catch-all "/" rule.
+	// Omit entirely for a standalone service (the default single-route behavior).
+	Route *RouteSpec `json:"route,omitempty"`
+}
+
+// RouteSpec configures shared-hostname routing across BirServices. See BirServiceSpec.Route.
+type RouteSpec struct {
+	// ShareWith is the full name of the parent BirService whose HTTPRoute/hostname this
+	// service joins (child role). When set, this service creates no HTTPRoute of its own.
+	ShareWith string `json:"shareWith,omitempty"`
+
+	// PathPrefix is the path under the shared host that routes to this child (e.g. /testing).
+	// Informational on the child; the authoritative copy lives in the parent's Members.
+	PathPrefix string `json:"pathPrefix,omitempty"`
+
+	// Weight is an optional weighted-split percentage (0-100) for this child on the shared
+	// host's catch-all rule. Used when PathPrefix is empty. Informational on the child.
+	Weight *int32 `json:"weight,omitempty"`
+
+	// Members lists the backends contributed by sharing children (parent role).
+	// Populated by the chart; not authored directly in tenant values.
+	Members []RouteMember `json:"members,omitempty"`
+}
+
+// RouteMember is one child backend added to a parent's shared HTTPRoute.
+type RouteMember struct {
+	// Service is the child's ClusterIP Service name (e.g. hello-csharp-testing-svc).
+	Service string `json:"service"`
+	// PathPrefix, when set, routes only this path prefix to the member (own HTTPRoute rule).
+	PathPrefix string `json:"pathPrefix,omitempty"`
+	// Weight, when set (and PathPrefix empty), adds the member as a weighted backend on the
+	// parent's catch-all rule instead of a separate path rule.
+	Weight *int32 `json:"weight,omitempty"`
 }
 
 // ShutdownSpec configures graceful pod termination. The operator computes
