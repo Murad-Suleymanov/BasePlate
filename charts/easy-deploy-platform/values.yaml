@@ -116,6 +116,15 @@ rbac:
         apiGroups: [""]
         resources: ["pods"]
         verbs: ["get", "list", "watch"]
+      # waypoint Gateway options ConfigMap (namespace_istio.go upsertWaypointOptions).
+      # Required cluster-wide so the controller-runtime cache can watch ConfigMaps;
+      # without it the cache informer fails and every reconcile that touches the
+      # waypoint ConfigMap blocks (mesh-enabled services never get a Deployment).
+      configmaps:
+        enabled: true
+        apiGroups: [""]
+        resources: ["configmaps"]
+        verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
       jobs:
         enabled: true
         apiGroups: ["batch"]
