@@ -10,6 +10,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "inheritFrom":    { "type": "string", "minLength": 1, "description": "Inherit the full config of the named sibling instance (e.g. 'main'); fields declared here override the inherited ones (deep merge). The target instance must not itself use inheritFrom (no chains)." },
         "image":          { "$ref": "#/properties/image" },
         "repo":           { "$ref": "#/properties/repo" },
         "tag":            { "$ref": "#/properties/tag" },

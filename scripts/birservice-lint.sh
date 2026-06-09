@@ -106,7 +106,7 @@ fi
 # ─── env-file validation: detect single vs multi-instance shape ─────────────
 KNOWN_KEYS=(name owner image repo tag imageTag dockerfile port containerPort replicas
             hpa resources hostname expose metrics traffic readinessProbe livenessProbe
-            singleton maxDown shutdown canary injectPipeline)
+            singleton maxDown shutdown canary injectPipeline inheritFrom)
 
 is_known_key() {
   local k="$1"
@@ -282,6 +282,71 @@ else:
     fi
   fi
 }
+
+# ─── inheritFrom: cross-instance reference validation (multi-instance only) ──
+# An instance may inherit a sibling's full config via `inheritFrom: <name>` and
+# override only the fields it declares. The helm template enforces the same rules
+# with a hard fail, but validating here gives line-anchored errors and typo
+# suggestions at lint time. Rules mirror the template:
+#   - target must be a defined sibling instance in this file
+#   - no self-reference
+#   - no chains: the target must not itself use inheritFrom
+is_instance_key() {
+  local k="$1" candidate
+  for candidate in "${instance_keys[@]}"; do [ "$k" = "$candidate" ] && return 0; done
+  return 1
+}
+
+# Closest instance name for a typo (Levenshtein distance <= 3), among real instances.
+suggest_instance_key() {
+  [ "${#instance_keys[@]}" -eq 0 ] && return 0
+  "$PY" -c "
+import sys
+target = sys.argv[1]
+candidates = sys.argv[2:]
+def dl(a, b):
+    m, n = len(a), len(b)
+    dp = [[0]*(n+1) for _ in range(m+1)]
+    for i in range(m+1): dp[i][0] = i
+    for j in range(n+1): dp[0][j] = j
+    for i in range(1, m+1):
+        for j in range(1, n+1):
+            cost = 0 if a[i-1] == b[j-1] else 1
+            dp[i][j] = min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+cost)
+    return dp[m][n]
+best = min(candidates, key=lambda c: dl(target.lower(), c.lower()))
+if dl(target.lower(), best.lower()) <= 3:
+    print(best)
+" "$1" "${instance_keys[@]}" 2>/dev/null
+}
+
+read_inherit_from() {
+  # Echoes the inheritFrom value of instance "$1", or "" if unset/null.
+  local v
+  v=$(yq ".\"$1\".inheritFrom // \"\"" "$file" 2>/dev/null)
+  case "$v" in ''|'""'|null) echo "" ;; *) echo "$v" ;; esac
+}
+
+for ik in "${instance_keys[@]}"; do
+  parent=$(read_inherit_from "$ik")
+  [ -z "$parent" ] && continue
+  if [ "$parent" = "$ik" ]; then
+    error "[instance '$ik'] inheritFrom cannot reference itself."
+    continue
+  fi
+  if ! is_instance_key "$parent"; then
+    suggestion=$(suggest_instance_key "$parent")
+    if [ -n "$suggestion" ]; then
+      error "[instance '$ik'] inheritFrom: '$parent' is not a defined instance. Did you mean '$suggestion'?"
+    else
+      error "[instance '$ik'] inheritFrom: '$parent' is not a defined instance. Available: ${instance_keys[*]}."
+    fi
+    continue
+  fi
+  if [ -n "$(read_inherit_from "$parent")" ]; then
+    error "[instance '$ik'] inheritFrom target '$parent' must not itself use inheritFrom (no chains)."
+  fi
+done
 
 # ─── dispatch: single vs multi-instance ─────────────────────────────────────
 if [ "${#instance_keys[@]}" -eq 0 ]; then

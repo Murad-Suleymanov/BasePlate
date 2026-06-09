@@ -74,6 +74,32 @@ Shared service-level fields (`repo`, `image`, `tag`, …) come from `service.yam
 
 **Shape detection is automatic**: if the root has any operational key (`hpa`, `resources`, `traffic`, …), it's single-instance; otherwise it's multi-instance (and every map at the root becomes an instance).
 
+#### Inherit from a sibling instance (`inheritFrom`)
+
+When two instances are nearly identical, don't duplicate the whole block. An instance can inherit the **full** config of a sibling with `inheritFrom: <name>` and override only the fields it declares. The override is a **deep merge**, so you can change a single nested leaf:
+
+```yaml
+main:
+  hpa:
+    minReplicas: 1
+    maxReplicas: 2
+  resources: {...}
+  traffic: {...}
+  readinessProbe: {path: /Health}
+
+slave:
+  inheritFrom: main      # copy everything from main…
+  hpa:
+    maxReplicas: 4       # …then override just this one leaf (minReplicas stays 1)
+```
+
+Rules:
+
+- The target must be a defined sibling instance in the **same** file.
+- No chains and no self-reference: the target must not itself use `inheritFrom`.
+- `inheritFrom` is resolution metadata only — it never appears in the rendered BirService spec.
+- Service-level fields from `service.yaml` (`repo`, `image`, …) still apply on top, with the instance/its parent winning on conflict.
+
 ## Editor Setup
 
 The chart ships a JSON schema (`charts/birservice/values.schema.json`) and a workspace VSCode binding so any `*/dev.yaml` / `*/prod.yaml` opened from BasePlate-Dev gets real-time validation:

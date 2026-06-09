@@ -17,6 +17,12 @@
 
   Service-level fields (image, repo, tag, imageTag, dockerfile) are inherited by
   each instance unless the instance overrides them.
+
+  An instance may also inherit the FULL config of a sibling instance via
+  `inheritFrom: <name>` and override only the fields it declares (deep merge):
+      main:  {hpa: {minReplicas: 1, maxReplicas: 2}, resources: ..., traffic: ...}
+      slave: {inheritFrom: main, hpa: {maxReplicas: 4}}
+      → slave is identical to main except hpa.maxReplicas = 4
 */ -}}
 {{- $isMulti := eq (include "birservice.isMultiInstance" .Values) "true" -}}
 {{- $owner := default "" .Values.owner | toString -}}
@@ -33,8 +39,29 @@
 {{- $knownKeys := list "name" "owner" "image" "repo" "tag" "imageTag" "dockerfile" "port" "containerPort" "replicas" "hpa" "resources" "hostname" "expose" "metrics" "traffic" "readinessProbe" "livenessProbe" "singleton" "maxDown" "shutdown" "canary" "injectPipeline" -}}
 {{- range $instanceName, $instanceCfg := .Values -}}
 {{- if and (not (has $instanceName $knownKeys)) (kindIs "map" $instanceCfg) }}
-{{- /* Merge shared service-level fields into per-instance dict (instance wins on conflict). */ -}}
-{{- $merged := merge (deepCopy $instanceCfg) $shared }}
+{{- /* Resolve `inheritFrom`: deep-merge this instance ON TOP OF the named sibling
+       so it overrides only the fields it declares. Single-level only (the target
+       must not itself use inheritFrom) to keep resolution order-independent. */ -}}
+{{- $base := dict -}}
+{{- if hasKey $instanceCfg "inheritFrom" -}}
+  {{- $parentName := $instanceCfg.inheritFrom | toString -}}
+  {{- if eq $parentName $instanceName -}}
+    {{- fail (printf "instance %q: inheritFrom cannot reference itself" $instanceName) -}}
+  {{- end -}}
+  {{- $parentCfg := index $.Values $parentName -}}
+  {{- if not (kindIs "map" $parentCfg) -}}
+    {{- fail (printf "instance %q: inheritFrom: %q is not a defined instance" $instanceName $parentName) -}}
+  {{- end -}}
+  {{- if hasKey $parentCfg "inheritFrom" -}}
+    {{- fail (printf "instance %q: inheritFrom target %q must not itself use inheritFrom (no chains)" $instanceName $parentName) -}}
+  {{- end -}}
+  {{- $base = deepCopy $parentCfg -}}
+{{- end -}}
+{{- /* This instance's own fields win over the inherited base (deep merge). */ -}}
+{{- $effective := mergeOverwrite $base (deepCopy $instanceCfg) -}}
+{{- $_ := unset $effective "inheritFrom" -}}
+{{- /* Merge shared service-level fields into the result (instance wins on conflict). */ -}}
+{{- $merged := merge $effective $shared }}
 ---
 apiVersion: deploy.easydeploy.io/v1alpha1
 kind: BirService
