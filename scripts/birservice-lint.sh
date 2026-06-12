@@ -201,7 +201,14 @@ lint_workload() {
   image=$(y '.image' '""')
   repo=$(y '.repo' '""')
   max_down=$(y '.maxDown' '-1')
-  traffic_present=$(yq "${prefix} | has(\"traffic\")" "$file" 2>/dev/null || echo "false")
+  # `${prefix} | has(...)` needs a left-hand expression; for the root (single-
+  # instance) shape prefix is empty, which would make the leading pipe a syntax
+  # error and silently yield "false" — a false "traffic block is missing".
+  if [ -n "$prefix" ]; then
+    traffic_present=$(yq "${prefix} | has(\"traffic\")" "$file" 2>/dev/null || echo "false")
+  else
+    traffic_present=$(yq 'has("traffic")' "$file" 2>/dev/null || echo "false")
+  fi
   eject=$(y '.traffic.ejectUnhealthy' 'true')
   ratelimit_enabled=$(y '.traffic.rateLimit.enabled' 'false')
   req_mem=$(y '.resources.requests.memory' '""')
