@@ -74,6 +74,16 @@ func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
+	// Being deleted: stop reconciling. The operator owns no custom finalizer, so
+	// owned children (Deployment, Service, HPA, HTTPRoute, …) are removed by the
+	// garbage collector via ownerReferences. Without this guard, reconcile keeps
+	// re-creating those children while foreground deletion tries to remove them —
+	// the foregroundDeletion finalizer is never satisfied, so the CR is stuck
+	// Terminating forever and its pods churn. Bail out and let GC finish.
+	if !bs.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, nil
+	}
+
 	// If repo is a Git URL, handle the build-then-deploy flow.
 	if isGitURL(bs.Spec.Repo) {
 		return r.reconcileBuild(ctx, req, &bs)
