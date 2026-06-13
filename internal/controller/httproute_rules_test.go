@@ -91,6 +91,19 @@ func TestBuildHTTPRouteRules_PathMember(t *testing.T) {
 	if got := backendNames(t, member); len(got) != 1 || got[0] != "hello-csharp-testing-svc" {
 		t.Errorf("/testing should route to child svc, got %v", got)
 	}
+	// The member rule must strip its prefix so the child app receives paths from "/".
+	filters, ok := member["filters"].([]interface{})
+	if !ok || len(filters) != 1 {
+		t.Fatalf("member rule should have 1 filter, got %#v", member["filters"])
+	}
+	rw := asMap(t, filters[0])
+	if rw["type"] != "URLRewrite" {
+		t.Errorf("filter type = %v, want URLRewrite", rw["type"])
+	}
+	path := asMap(t, asMap(t, rw["urlRewrite"])["path"])
+	if path["type"] != "ReplacePrefixMatch" || path["replacePrefixMatch"] != "/" {
+		t.Errorf("rewrite path = %#v, want ReplacePrefixMatch /", path)
+	}
 
 	catchAll := asMap(t, rules[1])
 	if pathValue(t, catchAll) != "/" {

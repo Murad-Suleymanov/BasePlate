@@ -199,10 +199,11 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 			// new pods prefer emptier nodes automatically. Hard (DoNotSchedule) would
 			// strand replicas as Pending on small clusters, so we never use it.
 			//
-			// LabelSelector covers all pods of this service (all ReplicaSet versions).
-			// MatchLabelKeys (K8s 1.25+) would scope the spread to per-version ReplicaSets
-			// so rolling updates land evenly independently — not available with k8s.io/api
-			// v0.20; upgrade the dependency to enable it.
+			// LabelSelector covers all pods of this service; MatchLabelKeys adds
+			// pod-template-hash (K8s 1.25+) so the spread is scoped per ReplicaSet version.
+			// Without it, a rolling update counts old and new pods together and the new
+			// ReplicaSet piles onto nodes that look empty of old pods; with it, each
+			// version spreads independently so the incoming pods land evenly.
 			templateSpec.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{
 				{
 					MaxSkew:           1,
@@ -1167,6 +1168,20 @@ func buildHTTPRouteRules(svcName string, svcPort int32, canarySvcName string, ca
 							"path": map[string]interface{}{
 								"type":  "PathPrefix",
 								"value": m.PathPrefix,
+							},
+						},
+					},
+					// Strip the routing prefix before forwarding so the member app, which
+					// typically runs the same image as the parent and is unaware of the
+					// shared-host layout, receives paths from "/" (e.g. /testing/health → /health).
+					"filters": []interface{}{
+						map[string]interface{}{
+							"type": "URLRewrite",
+							"urlRewrite": map[string]interface{}{
+								"path": map[string]interface{}{
+									"type":               "ReplacePrefixMatch",
+									"replacePrefixMatch": "/",
+								},
 							},
 						},
 					},
