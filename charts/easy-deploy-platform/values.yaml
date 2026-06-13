@@ -339,6 +339,75 @@ crd:
       format: int32
       minimum: 0
       description: "Maximum pods that may go down simultaneously during voluntary disruptions (node drains, upgrades). Default floor(replicas/2). Set lower for latency-critical apps. 0 forbids voluntary disruption (blocks node drains)."
+    canary:
+      type: object
+      description: "Canary deployment with weighted HTTPRoute traffic splitting. Remove or set enabled=false to tear down."
+      properties:
+        enabled:
+          type: boolean
+        weight:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 100
+          description: "Percentage of traffic routed to canary (0-100). Default 10."
+        image:
+          type: string
+          description: "Fully-qualified canary image. If empty, derived from spec.image + tag."
+        tag:
+          type: string
+          description: "Image tag override for canary (e.g. v2.0.0-rc1)."
+    shutdown:
+      type: object
+      description: "Graceful termination tuning. terminationGracePeriodSeconds = preStopSleepSeconds + drainBufferSeconds."
+      properties:
+        preStopSleepSeconds:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 600
+          description: "Seconds the container sleeps before SIGTERM (drains endpoints from kube-proxy/Istio xDS/Gateway). Default 15."
+        drainBufferSeconds:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 600
+          description: "Post-SIGTERM budget for in-flight requests to finish before SIGKILL. Default 5. Increase for long requests (uploads, streaming)."
+    route:
+      type: object
+      description: "Shared-hostname routing across BirServices. Chart-populated from the tenant route block. child sets shareWith; parent gets members."
+      properties:
+        shareWith:
+          type: string
+          description: "Full name of the parent BirService whose HTTPRoute/hostname to join. When set, this service creates no HTTPRoute of its own (child role)."
+        pathPrefix:
+          type: string
+          description: "Path prefix under the shared host that routes to this child (e.g. /testing). Authoritative copy lives in the parent's members."
+        weight:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 100
+          description: "Optional weighted-split percentage on the shared host's catch-all rule (used when pathPrefix is empty)."
+        members:
+          type: array
+          description: "Backends contributed by sharing children (parent role). Chart-populated."
+          items:
+            type: object
+            required: [service]
+            properties:
+              service:
+                type: string
+                description: "Child ClusterIP Service name (e.g. hello-csharp-testing-svc)."
+              pathPrefix:
+                type: string
+                description: "When set, routes only this path prefix to the member (its own HTTPRoute rule)."
+              weight:
+                type: integer
+                format: int32
+                minimum: 0
+                maximum: 100
+                description: "When set and pathPrefix empty, adds the member as a weighted backend on the parent's catch-all rule."
   statusProperties:
     availableReplicas:
       type: integer
@@ -351,3 +420,9 @@ crd:
       type: string
     lastRebuild:
       type: string
+    stableTag:
+      type: string
+      description: "Image tag locked as stable when canary was enabled. Cleared on promotion."
+    canaryImage:
+      type: string
+      description: "Full image URL of the active canary deployment."
