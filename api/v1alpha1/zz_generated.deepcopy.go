@@ -8,6 +8,11 @@ import (
 
 func (in *BirServiceSpec) DeepCopyInto(out *BirServiceSpec) {
 	*out = *in
+	if in.Hostnames != nil {
+		in, out := &in.Hostnames, &out.Hostnames
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.Replicas != nil {
 		in, out := &in.Replicas, &out.Replicas
 		*out = new(int32)

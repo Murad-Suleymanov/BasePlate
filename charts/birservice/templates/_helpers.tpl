@@ -73,6 +73,10 @@ containerPort: {{ $v.containerPort }}
 {{- if $v.hostname }}
 hostname: {{ $v.hostname | quote }}
 {{- end }}
+{{- if $v.hostnames }}
+hostnames:
+{{ toYaml $v.hostnames | indent 2 }}
+{{- end }}
 {{- if ne (default true $v.expose) true }}
 expose: false
 {{- end }}
@@ -128,7 +132,7 @@ Uses a dict for state because Go template `range` creates a new variable scope â
 direct `$var = ...` assignments inside `range` don't reliably persist outside.
 */}}
 {{- define "birservice.isMultiInstance" -}}
-{{- $knownKeys := list "name" "owner" "image" "repo" "tag" "imageTag" "dockerfile" "port" "containerPort" "replicas" "hpa" "resources" "hostname" "expose" "metrics" "traffic" "readinessProbe" "livenessProbe" "singleton" "maxDown" "shutdown" "canary" "injectPipeline" -}}
+{{- $knownKeys := list "name" "owner" "image" "repo" "tag" "imageTag" "dockerfile" "port" "containerPort" "replicas" "hpa" "resources" "hostname" "hostnames" "expose" "metrics" "traffic" "readinessProbe" "livenessProbe" "singleton" "maxDown" "shutdown" "canary" "injectPipeline" -}}
 {{- $state := dict "hasInstance" false -}}
 {{- range $k, $val := . -}}
   {{- if and (not (has $k $knownKeys)) (kindIs "map" $val) -}}

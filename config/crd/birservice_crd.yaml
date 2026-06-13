@@ -113,6 +113,11 @@ spec:
                   maximum: 65535
                 hostname:
                   type: string
+                hostnames:
+                  type: array
+                  items:
+                    type: string
+                  description: Additional public DNS aliases served by the same workload (one HTTPRoute, multiple hostnames). external-dns creates a record for each; all share the same pods and rate limit.
                 expose:
                   type: boolean
                   description: If false, no HTTPRoute/DNS (internal only). Default true.

@@ -33,6 +33,7 @@
         "hpa":            { "$ref": "#/properties/hpa" },
         "resources":      { "$ref": "#/properties/resources" },
         "hostname":       { "$ref": "#/properties/hostname" },
+        "hostnames":      { "$ref": "#/properties/hostnames" },
         "expose":         { "$ref": "#/properties/expose" },
         "metrics":        { "$ref": "#/properties/metrics" },
         "traffic":        { "$ref": "#/properties/traffic" },
@@ -136,6 +137,11 @@
     "hostname": {
       "type": "string",
       "description": "Public DNS name. Empty = auto-generated <name>-<namespace>.<baseDomain>."
+    },
+    "hostnames": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Additional DNS aliases served by the same workload (one HTTPRoute, multiple hostnames). All share the same pods and rate limit."
     },
     "expose": {
       "type": "boolean",

@@ -1006,6 +1006,26 @@ func (r *BirServiceReconciler) resolveHostname(bs *deployv1alpha1.BirService) st
 	return ""
 }
 
+// resolveHostnames returns every hostname the HTTPRoute should serve: the primary
+// (spec.hostname or the auto-generated name) followed by any spec.hostnames aliases,
+// de-duplicated with empties skipped. external-dns creates a record for each.
+func (r *BirServiceReconciler) resolveHostnames(bs *deployv1alpha1.BirService) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(h string) {
+		h = strings.TrimSpace(h)
+		if h != "" && !seen[h] {
+			seen[h] = true
+			out = append(out, h)
+		}
+	}
+	add(r.resolveHostname(bs))
+	for _, h := range bs.Spec.Hostnames {
+		add(h)
+	}
+	return out
+}
+
 func exposeOrDefault(bs *deployv1alpha1.BirService) bool {
 	if bs.Spec.Expose == nil {
 		return true
@@ -1232,13 +1252,13 @@ func buildHTTPRouteRules(svcName string, svcPort int32, canarySvcName string, ca
 
 func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deployv1alpha1.BirService, svcName string, svcPort int32, canaySvcName string, canaryWeight int32) error {
 	routeName := fmt.Sprintf("%s-route", bs.Name)
-	hostname := r.resolveHostname(bs)
+	hostnames := r.resolveHostnames(bs)
 
 	// A child (route.shareWith set) is reachable only through its parent's HTTPRoute,
 	// so it must not own a route of its own. Also drop the route when not exposed or
 	// no hostname resolves.
 	isChild := bs.Spec.Route != nil && bs.Spec.Route.ShareWith != ""
-	if isChild || !exposeOrDefault(bs) || hostname == "" {
+	if isChild || !exposeOrDefault(bs) || len(hostnames) == 0 {
 		existing := &unstructured.Unstructured{}
 		existing.SetGroupVersionKind(httpRouteGVK)
 		err := r.Get(ctx, types.NamespacedName{Name: routeName, Namespace: bs.Namespace}, existing)
@@ -1270,7 +1290,7 @@ func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deplo
 						"sectionName": "https",
 					},
 				},
-				"hostnames": []interface{}{hostname},
+				"hostnames": toInterfaceSlice(hostnames),
 				"rules":     rules,
 			}
 
@@ -1346,6 +1366,15 @@ func (r *BirServiceReconciler) reconcileServiceMonitor(ctx context.Context, bs *
 		})
 		return err
 	})
+}
+
+// toInterfaceSlice converts a []string to []interface{} for unstructured spec maps.
+func toInterfaceSlice(in []string) []interface{} {
+	out := make([]interface{}, len(in))
+	for i, v := range in {
+		out[i] = v
+	}
+	return out
 }
 
 func mergeStringMap(dst, src map[string]string) map[string]string {

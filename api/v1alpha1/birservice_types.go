@@ -46,6 +46,12 @@ type BirServiceSpec struct {
 	// If empty, auto-generated as <name>-<namespace>.<baseDomain>.
 	Hostname string `json:"hostname,omitempty"`
 
+	// Hostnames lists additional public DNS names (aliases) served by the same workload.
+	// The HTTPRoute serves the primary hostname (Hostname or the auto-generated name)
+	// plus every entry here, and external-dns creates a record for each. Use to expose
+	// one instance under several names; all share the same pods and rate limit.
+	Hostnames []string `json:"hostnames,omitempty"`
+
 	// Expose controls external access via HTTPRoute and DNS. Default true.
 	// If false, service is internal-only (ClusterIP).
 	Expose *bool `json:"expose,omitempty"`

@@ -36,7 +36,7 @@
 {{- /* Known keys: all chart-defined fields. Anything outside this list AND is a map */}}
 {{- /* is treated as an instance name. Defaults in values.yaml use known keys, so they */}}
 {{- /* don't get mistaken for instances. */ -}}
-{{- $knownKeys := list "name" "owner" "image" "repo" "tag" "imageTag" "dockerfile" "port" "containerPort" "replicas" "hpa" "resources" "hostname" "expose" "metrics" "traffic" "readinessProbe" "livenessProbe" "singleton" "maxDown" "shutdown" "canary" "injectPipeline" "route" -}}
+{{- $knownKeys := list "name" "owner" "image" "repo" "tag" "imageTag" "dockerfile" "port" "containerPort" "replicas" "hpa" "resources" "hostname" "hostnames" "expose" "metrics" "traffic" "readinessProbe" "livenessProbe" "singleton" "maxDown" "shutdown" "canary" "injectPipeline" "route" -}}
 {{- /* ── Shared-route pre-pass ──────────────────────────────────────────────
        Build $routeMembers: parent instance name -> list of member dicts, from the
        raw `route.shareWith` declared on child instances. References are validated
