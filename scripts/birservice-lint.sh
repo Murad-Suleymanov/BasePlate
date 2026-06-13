@@ -105,7 +105,7 @@ fi
 
 # ─── env-file validation: detect single vs multi-instance shape ─────────────
 KNOWN_KEYS=(name owner image repo tag imageTag dockerfile port containerPort replicas
-            hpa resources hostname expose metrics traffic readinessProbe livenessProbe
+            hpa resources hostname hostnames expose metrics traffic readinessProbe livenessProbe
             singleton maxDown shutdown canary injectPipeline inheritFrom route)
 
 is_known_key() {
