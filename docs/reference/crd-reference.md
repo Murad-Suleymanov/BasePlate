@@ -49,7 +49,7 @@ kubectl explain birservices.spec.singleton   # field-level docs
 | `hostname` | string | `<name>-<ns>.<baseDomain>` | External DNS name. |
 | `expose` | bool | `true` | `false` = ClusterIP-only, no HTTPRoute/DNS. |
 | `replicas` | int32 (≥0) | `1` | Fixed count. Wins over HPA when set. |
-| `hpa` | object | — | `minReplicas` + `maxReplicas` (both required). |
+| `hpa` | object | — | `minReplicas` + `maxReplicas` (both required); optional `targetRPS` scales on Istio requests/sec instead of CPU. |
 | `resources` | object | requests cpu=75m mem=200Mi; limits 2× | Container resource block. |
 | `readinessProbe` | object | TCP default | `path` (required) + `port`. |
 | `livenessProbe` | object | omitted | `path` (required) + `port`. |
@@ -68,9 +68,18 @@ kubectl explain birservices.spec.singleton   # field-level docs
 hpa:
   minReplicas: 2     # int32, ≥1 enables HPA; both must be set
   maxReplicas: 5     # int32, ≥1
+  targetRPS: 100     # int32, optional — scale on Istio requests/sec per pod
 ```
 
-Both fields required together to take effect. If `replicas` is set anywhere on the spec, HPA is *not* created (the lint warns).
+Both `minReplicas`/`maxReplicas` required together to take effect. If `replicas` is set anywhere on the spec, HPA is *not* created (the lint warns).
+
+**`targetRPS`** switches the HPA from CPU (default 80% utilization, via metrics-server)
+to Istio **requests-per-second per pod**, served by `prometheus-adapter` as the
+external metric `istio_requests_per_second` (derived from `istio_requests_total`).
+The HPA divides the workload's total mesh RPS by `targetRPS` to pick a replica
+count. **Requires `spec.traffic`** — only waypoint-enrolled workloads emit L7
+request metrics; a plain (ztunnel-only) workload reports L4 bytes/connections, so
+RPS scaling on it never fires (the operator logs a warning).
 
 ### `spec.resources`
 

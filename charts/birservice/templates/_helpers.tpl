@@ -35,6 +35,10 @@ replicas: {{ $replicas }}
 hpa:
   minReplicas: {{ $min }}
   maxReplicas: {{ $max }}
+{{- $targetRPS := (get $hpa "targetRPS") | default 0 | int }}
+{{- if gt $targetRPS 0 }}
+  targetRPS: {{ $targetRPS }}
+{{- end }}
 {{- end }}
 {{- $resources := $v.resources | default dict }}
 {{- $requests := (get $resources "requests") | default dict }}

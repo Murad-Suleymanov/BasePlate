@@ -10,7 +10,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
-	autoscalingv1 "k8s.io/api/autoscaling/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -762,7 +762,7 @@ func (r *BirServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&deployv1alpha1.BirService{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
-		Owns(&autoscalingv1.HorizontalPodAutoscaler{}).
+		Owns(&autoscalingv2.HorizontalPodAutoscaler{}).
 		Owns(&batchv1.Job{}).
 		Complete(r)
 }
@@ -1107,10 +1107,12 @@ func resolveContainerResources(bs *deployv1alpha1.BirService) (corev1.ResourceRe
 }
 
 func (r *BirServiceReconciler) reconcileHPA(ctx context.Context, bs *deployv1alpha1.BirService, depName string, labels map[string]string, minReplicas *int32, maxReplicas *int32) error {
-	// When spec.replicas is set, there is no HPA — replicas wins.
-	if bs.Spec.Replicas != nil {
-		hpa := &autoscalingv1.HorizontalPodAutoscaler{}
-		hpaName := fmt.Sprintf("%s-hpa", bs.Name)
+	hpaName := fmt.Sprintf("%s-hpa", bs.Name)
+
+	// When spec.replicas is set replicas wins, or HPA is disabled when min/max are
+	// missing — either way ensure no stale HPA remains.
+	if bs.Spec.Replicas != nil || minReplicas == nil || maxReplicas == nil {
+		hpa := &autoscalingv2.HorizontalPodAutoscaler{}
 		err := r.Get(ctx, types.NamespacedName{Name: hpaName, Namespace: bs.Namespace}, hpa)
 		if err == nil {
 			return client.IgnoreNotFound(r.Delete(ctx, hpa))
@@ -1118,37 +1120,87 @@ func (r *BirServiceReconciler) reconcileHPA(ctx context.Context, bs *deployv1alp
 		return client.IgnoreNotFound(err)
 	}
 
-	if minReplicas == nil || maxReplicas == nil {
-		// HPA was disabled — delete any existing HPA.
-		hpa := &autoscalingv1.HorizontalPodAutoscaler{}
-		hpaName := fmt.Sprintf("%s-hpa", bs.Name)
-		err := r.Get(ctx, types.NamespacedName{Name: hpaName, Namespace: bs.Namespace}, hpa)
-		if err == nil {
-			return client.IgnoreNotFound(r.Delete(ctx, hpa))
-		}
-		return client.IgnoreNotFound(err)
+	if bs.Spec.HPA != nil && bs.Spec.HPA.TargetRPS != nil && *bs.Spec.HPA.TargetRPS > 0 && bs.Spec.Traffic == nil {
+		// RPS scaling reads istio_requests_total, which only exists for
+		// waypoint-enrolled workloads. Without spec.traffic the workload has no
+		// waypoint, the external metric stays empty, and the HPA can't scale up.
+		log.FromContext(ctx).Info("spec.hpa.targetRPS is set but spec.traffic is nil; "+
+			"no waypoint means no L7 request metrics — RPS-based HPA will not scale", "name", bs.Name)
 	}
 
-	hpa := &autoscalingv1.HorizontalPodAutoscaler{}
-	hpa.Name = fmt.Sprintf("%s-hpa", bs.Name)
+	metrics := hpaMetrics(bs, depName)
+
+	hpa := &autoscalingv2.HorizontalPodAutoscaler{}
+	hpa.Name = hpaName
 	hpa.Namespace = bs.Namespace
 
-	targetCPU := int32(80)
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, hpa, func() error {
 		hpa.ObjectMeta.Labels = mergeStringMap(hpa.ObjectMeta.Labels, labels)
-		hpa.Spec = autoscalingv1.HorizontalPodAutoscalerSpec{
-			ScaleTargetRef: autoscalingv1.CrossVersionObjectReference{
+		hpa.Spec = autoscalingv2.HorizontalPodAutoscalerSpec{
+			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
 				APIVersion: "apps/v1",
 				Kind:       "Deployment",
 				Name:       depName,
 			},
-			MinReplicas:                    minReplicas,
-			MaxReplicas:                    *maxReplicas,
-			TargetCPUUtilizationPercentage: &targetCPU,
+			MinReplicas: minReplicas,
+			MaxReplicas: *maxReplicas,
+			Metrics:     metrics,
 		}
 		return ctrl.SetControllerReference(bs, hpa, r.Scheme)
 	})
 	return err
+}
+
+// hpaMetrics builds the autoscaling/v2 metric list for a BirService HPA.
+//
+// When spec.hpa.targetRPS is set, the HPA scales on an External metric
+// (istio_requests_per_second) served by prometheus-adapter from the mesh's
+// istio_requests_total counter. The metric is selected by destination workload +
+// namespace and uses an AverageValue target, so the HPA divides the workload's
+// total request rate by targetRPS to choose a replica count. This requires the
+// workload to be waypoint-enrolled (spec.traffic) — only then does Istio emit L7
+// request metrics for it.
+//
+// Otherwise the HPA scales on CPU utilization at 80% (the platform default),
+// served by metrics-server.
+func hpaMetrics(bs *deployv1alpha1.BirService, depName string) []autoscalingv2.MetricSpec {
+	if bs.Spec.HPA != nil && bs.Spec.HPA.TargetRPS != nil && *bs.Spec.HPA.TargetRPS > 0 {
+		targetRPS := resource.NewQuantity(int64(*bs.Spec.HPA.TargetRPS), resource.DecimalSI)
+		return []autoscalingv2.MetricSpec{{
+			Type: autoscalingv2.ExternalMetricSourceType,
+			External: &autoscalingv2.ExternalMetricSource{
+				Metric: autoscalingv2.MetricIdentifier{
+					Name: "istio_requests_per_second",
+					// destination_workload picks this workload's series; the
+					// destination_workload_namespace label is injected by
+					// prometheus-adapter from the HPA's namespace (resource
+					// override), so two same-named workloads in different
+					// namespaces don't cross-count.
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"destination_workload": depName,
+						},
+					},
+				},
+				Target: autoscalingv2.MetricTarget{
+					Type:         autoscalingv2.AverageValueMetricType,
+					AverageValue: targetRPS,
+				},
+			},
+		}}
+	}
+
+	targetCPU := int32(80)
+	return []autoscalingv2.MetricSpec{{
+		Type: autoscalingv2.ResourceMetricSourceType,
+		Resource: &autoscalingv2.ResourceMetricSource{
+			Name: corev1.ResourceCPU,
+			Target: autoscalingv2.MetricTarget{
+				Type:               autoscalingv2.UtilizationMetricType,
+				AverageUtilization: &targetCPU,
+			},
+		},
+	}}
 }
 
 // buildHTTPRouteRules constructs the HTTPRoute rules for a service.

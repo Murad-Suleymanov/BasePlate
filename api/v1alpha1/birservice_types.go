@@ -212,6 +212,17 @@ type LocalRateLimitSpec struct {
 type HPASpec struct {
 	MinReplicas *int32 `json:"minReplicas,omitempty"`
 	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
+
+	// TargetRPS, when set, scales on Istio requests-per-second instead of CPU.
+	// The operator emits an autoscaling/v2 HPA with an External metric
+	// (istio_requests_per_second, served by prometheus-adapter) targeting this
+	// average requests/sec per pod. HPA divides the workload's total mesh RPS by
+	// the target to pick a replica count.
+	// Requires spec.traffic so the workload gets a waypoint — L7 request metrics
+	// (istio_requests_total) only exist for waypoint-enrolled services; a plain
+	// ztunnel-only workload reports L4 bytes/connections, not requests.
+	// Ignored when spec.replicas is set. When omitted, HPA scales on CPU at 80%.
+	TargetRPS *int32 `json:"targetRPS,omitempty"`
 }
 
 type ResourceConfigSpec struct {

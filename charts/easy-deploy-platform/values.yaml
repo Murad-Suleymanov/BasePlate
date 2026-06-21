@@ -238,6 +238,11 @@ crd:
           type: integer
           format: int32
           minimum: 1
+        targetRPS:
+          type: integer
+          format: int32
+          minimum: 1
+          description: "Scale on Istio requests-per-second (per pod) instead of CPU. Requires spec.traffic."
     resources:
       type: object
       description: "Container resource requests/limits."

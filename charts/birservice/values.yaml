@@ -14,6 +14,9 @@ hpa:
   # minReplicas + maxReplicas: HPA (alternative to replicas).
   minReplicas: 0
   maxReplicas: 0
+  # targetRPS: scale on Istio requests/sec per pod instead of CPU.
+  # Requires traffic (waypoint). Omit to scale on CPU at 80%.
+  # targetRPS: 100
 resources:
   requests:
     # Defaults when omitted: memory=200Mi, cpu=75m

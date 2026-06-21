@@ -263,6 +263,11 @@ func (in *HPASpec) DeepCopyInto(out *HPASpec) {
 		*out = new(int32)
 		**out = **in
 	}
+	if in.TargetRPS != nil {
+		in, out := &in.TargetRPS, &out.TargetRPS
+		*out = new(int32)
+		**out = **in
+	}
 }
 
 func (in *HPASpec) DeepCopy() *HPASpec {
