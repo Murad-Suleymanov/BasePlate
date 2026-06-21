@@ -28,6 +28,9 @@ const (
 	labelUseWaypoint       = "istio.io/use-waypoint"
 	dataplaneAmbient       = "ambient"
 	waypointName           = "waypoint"
+	// labelRouteGroup marks the pool a pod belongs to. The pool's Service selects
+	// this label, so instances sharing a route name are load-balanced as one pool.
+	labelRouteGroup = "deploy.easydeploy.io/route-group"
 	// waypointOptionsCM is the ConfigMap referenced by the waypoint Gateway's
 	// spec.infrastructure.parametersRef. Its horizontalPodAutoscaler key carries the
 	// HPA spec Istio applies to the auto-generated waypoint Deployment.

@@ -104,45 +104,49 @@ type BirServiceSpec struct {
 	// before SIGTERM; terminationGracePeriodSeconds is auto-derived as preStopSleep + 5.
 	Shutdown *ShutdownSpec `json:"shutdown,omitempty"`
 
-	// Route groups several BirServices under one shared hostname/HTTPRoute.
-	// Two roles, set by the chart from the tenant `route:` block:
-	//   - child: ShareWith = the full name of the parent BirService whose hostname to
-	//     join. A child does NOT create its own HTTPRoute; it is reached only through
-	//     the parent's route (via PathPrefix / Weight contributed as a member there).
-	//   - parent: Members = the extra backends contributed by sharing children. The
-	//     parent's HTTPRoute gets one rule per member plus its own catch-all "/" rule.
-	// Omit entirely for a standalone service (the default single-route behavior).
+	// Route is the chart-resolved routing for this instance. The chart looks up the
+	// tenant's route name(s) in the per-service routes.yaml catalog for the active
+	// cluster and fills this in; tenants never author it directly.
+	//
+	// Instances that resolve to the same Group share ONE Service (a load-balanced
+	// pod pool): every member's pods carry the route-group label and the pool's
+	// Service selects that label, so the load balancer spreads requests across all
+	// of them. Exactly one member per Group is Primary and owns the Service +
+	// HTTPRoutes; the others only contribute pods.
+	//
+	// Omit entirely for a standalone service (Group defaults to the instance name).
 	Route *RouteSpec `json:"route,omitempty"`
 }
 
-// RouteSpec configures shared-hostname routing across BirServices. See BirServiceSpec.Route.
+// RouteSpec is the chart-resolved routing for one BirService instance (pool model).
 type RouteSpec struct {
-	// ShareWith is the full name of the parent BirService whose HTTPRoute/hostname this
-	// service joins (child role). When set, this service creates no HTTPRoute of its own.
-	ShareWith string `json:"shareWith,omitempty"`
+	// Group identifies the pool. All instances with the same Group share one Service
+	// whose selector matches the route-group pod label. Defaults to the BirService
+	// name (standalone) when no route is referenced.
+	Group string `json:"group,omitempty"`
 
-	// PathPrefix is the path under the shared host that routes to this child (e.g. /testing).
-	// Informational on the child; the authoritative copy lives in the parent's Members.
-	PathPrefix string `json:"pathPrefix,omitempty"`
+	// Primary marks the single member that owns the pool's Service and HTTPRoutes.
+	// Non-primary members only contribute pods (the route-group label); they create
+	// no Service or HTTPRoute of their own.
+	Primary bool `json:"primary,omitempty"`
 
-	// Weight is an optional weighted-split percentage (0-100) for this child on the shared
-	// host's catch-all rule. Used when PathPrefix is empty. Informational on the child.
-	Weight *int32 `json:"weight,omitempty"`
-
-	// Members lists the backends contributed by sharing children (parent role).
-	// Populated by the chart; not authored directly in tenant values.
-	Members []RouteMember `json:"members,omitempty"`
+	// Entries are the named HTTP front doors for the pool — one HTTPRoute each, with
+	// its own hostname/timeout/retries. Set only on the Primary member.
+	Entries []RouteEntry `json:"entries,omitempty"`
 }
 
-// RouteMember is one child backend added to a parent's shared HTTPRoute.
-type RouteMember struct {
-	// Service is the child's ClusterIP Service name (e.g. hello-csharp-testing-svc).
-	Service string `json:"service"`
-	// PathPrefix, when set, routes only this path prefix to the member (own HTTPRoute rule).
-	PathPrefix string `json:"pathPrefix,omitempty"`
-	// Weight, when set (and PathPrefix empty), adds the member as a weighted backend on the
-	// parent's catch-all rule instead of a separate path rule.
-	Weight *int32 `json:"weight,omitempty"`
+// RouteEntry is one named HTTPRoute (front door) for a pool, resolved from the
+// per-service routes.yaml catalog for the active cluster.
+type RouteEntry struct {
+	// Name is the route name the developer referenced (e.g. "main", "main_slow").
+	Name string `json:"name"`
+	// Hostname this route is served on. Empty → operator auto-derives
+	// <name>-<namespace>.<baseDomain>.
+	Hostname string `json:"hostname,omitempty"`
+	// Timeout is the per-request timeout (e.g. "15s"). Empty → Gateway default.
+	Timeout string `json:"timeout,omitempty"`
+	// Retries is the number of HTTP retries. Nil → no retry policy.
+	Retries *int32 `json:"retries,omitempty"`
 }
 
 // ShutdownSpec configures graceful pod termination. The operator computes

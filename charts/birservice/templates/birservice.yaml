@@ -1,31 +1,20 @@
 {{- /*
-  This template emits either one BirService (single-instance, legacy shape) or N
-  BirServices (multi-instance shape, one per top-level instance key).
+  Emits one BirService (single-instance shape) or N BirServices (multi-instance,
+  one per top-level instance key).
 
-  Single shape — values root has operational keys directly (hpa, resources, ...):
-      hpa: {minReplicas: 1, maxReplicas: 3}
-      resources: {...}
-      → BirService named {{ .Release.Name }}
-
-  Multi shape — values root has instance maps under arbitrary names, plus shared
-  service-level fields (repo, owner) at root:
-      repo: ...
-      owner: ...
-      main:  {hpa: ..., resources: ..., traffic: ...}
-      slave: {hpa: ..., resources: ..., traffic: ...}
-      → BirServices named {{ .Release.Name }}-main, {{ .Release.Name }}-slave
-
-  Service-level fields (image, repo, tag, imageTag, dockerfile) are inherited by
-  each instance unless the instance overrides them.
-
-  An instance may also inherit the FULL config of a sibling instance via
-  `inheritFrom: <name>` and override only the fields it declares (deep merge):
-      main:  {hpa: {minReplicas: 1, maxReplicas: 2}, resources: ..., traffic: ...}
-      slave: {inheritFrom: main, hpa: {maxReplicas: 4}}
-      → slave is identical to main except hpa.maxReplicas = 4
+  Routing (pool model): an instance references route name(s) via `route: <name>`
+  (single) or `routes: [<names>]` (list). Policies (hostname/timeout/retries) live
+  per cluster in the `_routes` catalog (common ⊕ <environment>). Instances that
+  resolve to the same route name share ONE Service (a load-balanced pod pool); the
+  chart designates one primary per pool to own the Service + HTTPRoutes. Omit route
+  entirely for a standalone service.
 */ -}}
-{{- $isMulti := eq (include "birservice.isMultiInstance" .Values) "true" -}}
 {{- $owner := default "" .Values.owner | toString -}}
+{{- /* Route catalog for THIS cluster. ArgoCD loads the matching routes-<env>.yaml,
+       so _routes is already the flat {routeName -> policy} map for this cluster. */ -}}
+{{- $catalog := .Values._routes | default dict -}}
+
+{{- $isMulti := eq (include "birservice.isMultiInstance" .Values) "true" -}}
 
 {{- if $isMulti -}}
 {{- /* Inherited service-level fields propagate to each instance. */ -}}
@@ -33,56 +22,28 @@
 {{- range $k := list "image" "repo" "tag" "imageTag" "dockerfile" -}}
   {{- if hasKey $.Values $k -}}{{- $_ := set $shared $k (index $.Values $k) -}}{{- end -}}
 {{- end -}}
-{{- /* Known keys: all chart-defined fields. Anything outside this list AND is a map */}}
-{{- /* is treated as an instance name. Defaults in values.yaml use known keys, so they */}}
-{{- /* don't get mistaken for instances. */ -}}
-{{- $knownKeys := list "name" "owner" "image" "repo" "tag" "imageTag" "dockerfile" "port" "containerPort" "replicas" "hpa" "resources" "hostname" "hostnames" "expose" "metrics" "traffic" "readinessProbe" "livenessProbe" "singleton" "maxDown" "shutdown" "canary" "injectPipeline" "route" -}}
-{{- /* ── Shared-route pre-pass ──────────────────────────────────────────────
-       Build $routeMembers: parent instance name -> list of member dicts, from the
-       raw `route.shareWith` declared on child instances. References are validated
-       here so a bad shareWith fails the render with a clear message (same rules the
-       operator assumes). A child joins the parent's hostname; the parent emits one
-       HTTPRoute rule per member. */ -}}
-{{- $routeMembers := dict -}}
+{{- $knownKeys := list "name" "owner" "image" "repo" "tag" "imageTag" "dockerfile" "port" "containerPort" "replicas" "hpa" "resources" "hostname" "hostnames" "expose" "metrics" "traffic" "readinessProbe" "livenessProbe" "singleton" "maxDown" "shutdown" "canary" "injectPipeline" "route" "routes" "environment" -}}
+{{- /* ── Primary designation ──────────────────────────────────────────────────
+       For each route name, pick the instance that owns the pool's Service + routes:
+       the instance whose name equals the route name, else the first (sorted) one
+       referencing it. Map keys iterate sorted, so this is deterministic. */ -}}
+{{- $primaryOf := dict -}}
 {{- range $iname, $icfg := .Values -}}
 {{- if and (not (has $iname $knownKeys)) (not (hasPrefix "_" $iname)) (kindIs "map" $icfg) -}}
-{{- $r := $icfg.route | default dict -}}
-{{- if $r.shareWith -}}
-  {{- $parent := $r.shareWith | toString -}}
-  {{- if eq $parent $iname -}}
-    {{- fail (printf "instance %q: route.shareWith cannot reference itself" $iname) -}}
-  {{- end -}}
-  {{- $parentCfg := index $.Values $parent -}}
-  {{- if or (has $parent $knownKeys) (not (kindIs "map" $parentCfg)) -}}
-    {{- fail (printf "instance %q: route.shareWith: %q is not a defined instance" $iname $parent) -}}
-  {{- end -}}
-  {{- $parentRoute := $parentCfg.route | default dict -}}
-  {{- if $parentRoute.shareWith -}}
-    {{- fail (printf "instance %q: route.shareWith target %q is itself a shared child (no chains)" $iname $parent) -}}
-  {{- end -}}
-  {{- if $icfg.hostname -}}
-    {{- fail (printf "instance %q: a shared child must not set its own hostname (host comes from %q)" $iname $parent) -}}
-  {{- end -}}
-  {{- $member := dict "service" (printf "%s-%s-svc" $.Release.Name $iname) -}}
-  {{- if $r.pathPrefix -}}
-    {{- if not (hasPrefix "/" ($r.pathPrefix | toString)) -}}
-      {{- fail (printf "instance %q: route.pathPrefix %q must start with '/'" $iname $r.pathPrefix) -}}
+  {{- $rnames := list -}}
+  {{- if $icfg.route -}}{{- $rnames = list ($icfg.route | toString) -}}{{- else if $icfg.routes -}}{{- $rnames = $icfg.routes -}}{{- end -}}
+  {{- range $rn := $rnames -}}
+    {{- $rn = $rn | toString -}}
+    {{- if or (not (hasKey $primaryOf $rn)) (eq $iname $rn) -}}
+      {{- $_ := set $primaryOf $rn $iname -}}
     {{- end -}}
-    {{- $_ := set $member "pathPrefix" $r.pathPrefix -}}
-  {{- else if hasKey $r "weight" -}}
-    {{- $_ := set $member "weight" $r.weight -}}
   {{- end -}}
-  {{- $list := get $routeMembers $parent | default list -}}
-  {{- $list = append $list $member -}}
-  {{- $_ := set $routeMembers $parent $list -}}
-{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- range $instanceName, $instanceCfg := .Values -}}
 {{- if and (not (has $instanceName $knownKeys)) (not (hasPrefix "_" $instanceName)) (kindIs "map" $instanceCfg) }}
 {{- /* Resolve `inheritFrom`: deep-merge this instance ON TOP OF the named sibling
-       so it overrides only the fields it declares. Single-level only (the target
-       must not itself use inheritFrom) to keep resolution order-independent. */ -}}
+       so it overrides only the fields it declares. Single-level only. */ -}}
 {{- $base := dict -}}
 {{- if hasKey $instanceCfg "inheritFrom" -}}
   {{- $parentName := $instanceCfg.inheritFrom | toString -}}
@@ -98,20 +59,17 @@
   {{- end -}}
   {{- $base = deepCopy $parentCfg -}}
 {{- end -}}
-{{- /* This instance's own fields win over the inherited base (deep merge). */ -}}
 {{- $effective := mergeOverwrite $base (deepCopy $instanceCfg) -}}
 {{- $_ := unset $effective "inheritFrom" -}}
-{{- /* Merge shared service-level fields into the result (instance wins on conflict). */ -}}
 {{- $merged := merge $effective $shared }}
-{{- /* Resolve shared routing into the emitted spec: a child carries the parent's
-       full BirService name in route.shareWith (operator then skips its own route);
-       a parent carries the computed members. Drop any route that leaked via inheritFrom. */ -}}
+{{- /* Resolve routing: tenant route/routes (names) → CR route {group, primary, entries}.
+       Drop the raw tenant fields so only the resolved object reaches the operator. */ -}}
 {{- $_ := unset $merged "route" -}}
-{{- $rawRoute := $instanceCfg.route | default dict -}}
-{{- if $rawRoute.shareWith -}}
-  {{- $_ := set $merged "route" (dict "shareWith" (printf "%s-%s" $.Release.Name ($rawRoute.shareWith | toString))) -}}
-{{- else if hasKey $routeMembers $instanceName -}}
-  {{- $_ := set $merged "route" (dict "members" (get $routeMembers $instanceName)) -}}
+{{- $_ := unset $merged "routes" -}}
+{{- $rnames := list -}}
+{{- if $instanceCfg.route -}}{{- $rnames = list ($instanceCfg.route | toString) -}}{{- else if $instanceCfg.routes -}}{{- $rnames = $instanceCfg.routes -}}{{- end -}}
+{{- if gt (len $rnames) 0 -}}
+  {{- $_ := set $merged "route" (include "birservice.resolveRoute" (dict "rnames" $rnames "instance" $instanceName "primaryOf" $primaryOf "catalog" $catalog "release" $.Release.Name) | fromYaml) -}}
 {{- end }}
 ---
 apiVersion: deploy.easydeploy.io/v1alpha1
@@ -132,11 +90,22 @@ spec:
 {{- end -}}
 
 {{- else -}}
+{{- /* Single-instance: always its own primary. */ -}}
+{{- $vals := deepCopy .Values -}}
+{{- $_ := unset $vals "route" -}}
+{{- $_ := unset $vals "routes" -}}
+{{- $name := default .Release.Name .Values.name -}}
+{{- $rnames := list -}}
+{{- if .Values.route -}}{{- $rnames = list (.Values.route | toString) -}}{{- else if .Values.routes -}}{{- $rnames = .Values.routes -}}{{- end -}}
+{{- if gt (len $rnames) 0 -}}
+  {{- $primaryRoute := index $rnames 0 | toString -}}
+  {{- $_ := set $vals "route" (include "birservice.resolveRoute" (dict "rnames" $rnames "instance" $primaryRoute "primaryOf" (dict $primaryRoute $primaryRoute) "catalog" $catalog "release" $name) | fromYaml) -}}
+{{- end }}
 ---
 apiVersion: deploy.easydeploy.io/v1alpha1
 kind: BirService
 metadata:
-  name: {{ default .Release.Name .Values.name | quote }}
+  name: {{ $name | quote }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
 {{ include "birservice.labels" . | indent 4 }}
@@ -145,5 +114,5 @@ metadata:
     deploy.easydeploy.io/owner: {{ $owner | quote }}
 {{- end }}
 spec:
-{{ include "birservice.spec" .Values | indent 2 }}
+{{ include "birservice.spec" $vals | indent 2 }}
 {{- end -}}

@@ -184,6 +184,10 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 			// the ingress gateway resolves Endpoints and connects to pod IPs, which bypasses
 			// the service-VIP waypoint binding. Pod-level label routes pod-IP traffic via waypoint too.
 			templateLabels := mergeStringMap(map[string]string{}, labels)
+			// route-group: pods join their pool here (Deployment selector stays
+			// app.kubernetes.io/name — immutable — so this is pod-template only).
+			// The pool's Service selects this label, spanning every member's pods.
+			templateLabels[labelRouteGroup] = routeGroup(bs)
 			if bsNeedsWaypoint(bs) {
 				templateLabels[labelUseWaypoint] = waypointName
 			}
@@ -304,45 +308,51 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
-	svcName := fmt.Sprintf("%s-svc", bs.Name)
-	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		svc := corev1.Service{}
-		svc.Name = svcName
-		svc.Namespace = bs.Namespace
+	// The pool's Service is owned by the primary member only; non-primary members
+	// just contribute pods (via the route-group label) and create no Service.
+	svcName := poolServiceName(bs)
+	if routeIsPrimary(bs) {
+		if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+			svc := corev1.Service{}
+			svc.Name = svcName
+			svc.Namespace = bs.Namespace
 
-		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, &svc, func() error {
-			svc.ObjectMeta.Labels = mergeStringMap(svc.ObjectMeta.Labels, labels)
-			// In Istio ambient mode, services need this label to route through the
-			// namespace's waypoint Pod for L7 features (HTTP routing, tracing, RBAC).
-			// Namespace-level use-waypoint label alone is not always honored by ztunnel
-			// for service-VIP traffic; service-level label is the authoritative signal.
-			// Toggle symmetrically with spec.traffic so removing traffic also removes the
-			// label (mergeStringMap only adds — explicit delete is required for removal).
-			if bsNeedsWaypoint(bs) {
-				if svc.ObjectMeta.Labels == nil {
-					svc.ObjectMeta.Labels = map[string]string{}
+			_, err := controllerutil.CreateOrUpdate(ctx, r.Client, &svc, func() error {
+				svc.ObjectMeta.Labels = mergeStringMap(svc.ObjectMeta.Labels, labels)
+				// In Istio ambient mode, services need this label to route through the
+				// namespace's waypoint Pod for L7 features (HTTP routing, tracing, RBAC).
+				// Namespace-level use-waypoint label alone is not always honored by ztunnel
+				// for service-VIP traffic; service-level label is the authoritative signal.
+				// Toggle symmetrically with spec.traffic so removing traffic also removes the
+				// label (mergeStringMap only adds — explicit delete is required for removal).
+				if bsNeedsWaypoint(bs) {
+					if svc.ObjectMeta.Labels == nil {
+						svc.ObjectMeta.Labels = map[string]string{}
+					}
+					svc.ObjectMeta.Labels[labelUseWaypoint] = waypointName
+				} else {
+					delete(svc.ObjectMeta.Labels, labelUseWaypoint)
 				}
-				svc.ObjectMeta.Labels[labelUseWaypoint] = waypointName
-			} else {
-				delete(svc.ObjectMeta.Labels, labelUseWaypoint)
-			}
 
-			svc.Spec.Selector = labels
-			svc.Spec.Type = corev1.ServiceTypeClusterIP
-			svc.Spec.Ports = []corev1.ServicePort{
-				{
-					Name:       "http",
-					Port:       port,
-					TargetPort: intstr.FromInt(int(containerPort)),
-					Protocol:   corev1.ProtocolTCP,
-				},
-			}
+				// Select on the route-group label so the pool spans every member's
+				// pods (main + testing + …), letting the LB pick any of them.
+				svc.Spec.Selector = map[string]string{labelRouteGroup: routeGroup(bs)}
+				svc.Spec.Type = corev1.ServiceTypeClusterIP
+				svc.Spec.Ports = []corev1.ServicePort{
+					{
+						Name:       "http",
+						Port:       port,
+						TargetPort: intstr.FromInt(int(containerPort)),
+						Protocol:   corev1.ProtocolTCP,
+					},
+				}
 
-			return ctrl.SetControllerReference(bs, &svc, r.Scheme)
-		})
-		return err
-	}); err != nil {
-		return ctrl.Result{}, err
+				return ctrl.SetControllerReference(bs, &svc, r.Scheme)
+			})
+			return err
+		}); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	if err := r.reconcileHPA(ctx, bs, depName, labels, minReplicas, maxReplicas); err != nil {
@@ -1016,6 +1026,20 @@ func (r *BirServiceReconciler) resolveHostname(bs *deployv1alpha1.BirService) st
 	return ""
 }
 
+// routeHostname derives a distinct hostname for a secondary route entry:
+// <bs.Name>-<routeName>-<env>.<baseDomain>. Used when the route catalog leaves the
+// hostname unset, so multiple routes on one pool don't share a hostname.
+func (r *BirServiceReconciler) routeHostname(bs *deployv1alpha1.BirService, routeName string) string {
+	if r.BaseDomain == "" {
+		return ""
+	}
+	env := strings.TrimSpace(r.Environment)
+	if env == "" {
+		env = bs.Namespace
+	}
+	return fmt.Sprintf("%s-%s-%s.%s", bs.Name, routeName, env, r.BaseDomain)
+}
+
 // resolveHostnames returns every hostname the HTTPRoute should serve: the primary
 // (spec.hostname or the auto-generated name) followed by any spec.hostnames aliases,
 // de-duplicated with empties skipped. external-dns creates a record for each.
@@ -1041,6 +1065,30 @@ func exposeOrDefault(bs *deployv1alpha1.BirService) bool {
 		return true
 	}
 	return *bs.Spec.Expose
+}
+
+// routeGroup returns the pool identifier for this instance: the chart-resolved
+// route.group, or the BirService name when standalone (its own single-pod pool).
+func routeGroup(bs *deployv1alpha1.BirService) string {
+	if bs.Spec.Route != nil && bs.Spec.Route.Group != "" {
+		return bs.Spec.Route.Group
+	}
+	return bs.Name
+}
+
+// routeIsPrimary reports whether this instance owns its pool's Service and
+// HTTPRoutes. Standalone instances (no route) are always their own primary;
+// non-primary pool members only contribute pods.
+func routeIsPrimary(bs *deployv1alpha1.BirService) bool {
+	if bs.Spec.Route != nil {
+		return bs.Spec.Route.Primary
+	}
+	return true
+}
+
+// poolServiceName is the Service that fronts a pool: <group>-svc.
+func poolServiceName(bs *deployv1alpha1.BirService) string {
+	return fmt.Sprintf("%s-svc", routeGroup(bs))
 }
 
 func resolveHPAConfig(bs *deployv1alpha1.BirService) (*int32, *int32, bool) {
@@ -1203,15 +1251,10 @@ func hpaMetrics(bs *deployv1alpha1.BirService, depName string) []autoscalingv2.M
 	}}
 }
 
-// buildHTTPRouteRules constructs the HTTPRoute rules for a service.
-//   - The catch-all "/" rule routes to the service itself, split with the canary when active.
-//   - Shared-route members (parent role) each contribute either a dedicated PathPrefix rule
-//     (when PathPrefix is set) or a weighted backend joined onto the catch-all rule.
-//
-// When there are no path-based members, the original single-rule shape (no explicit match)
-// is preserved so standalone and canary services render exactly as before. Members share the
-// parent's Service port (children typically inheritFrom the parent).
-func buildHTTPRouteRules(svcName string, svcPort int32, canarySvcName string, canaryWeight int32, route *deployv1alpha1.RouteSpec) []interface{} {
+// buildHTTPRouteRules constructs the single catch-all rule for a pool's HTTPRoute:
+// all traffic goes to the pool Service (load-balanced across every member's pods),
+// optionally split with the canary, with an optional per-request timeout.
+func buildHTTPRouteRules(svcName string, svcPort int32, canarySvcName string, canaryWeight int32, timeout string) []interface{} {
 	catchAllBackends := []interface{}{
 		map[string]interface{}{
 			"name": svcName,
@@ -1237,140 +1280,101 @@ func buildHTTPRouteRules(svcName string, svcPort int32, canarySvcName string, ca
 		}
 	}
 
-	var memberRules []interface{}
-	if route != nil {
-		for _, m := range route.Members {
-			if m.Service == "" {
-				continue
-			}
-			if m.PathPrefix != "" {
-				memberRules = append(memberRules, map[string]interface{}{
-					"matches": []interface{}{
-						map[string]interface{}{
-							"path": map[string]interface{}{
-								"type":  "PathPrefix",
-								"value": m.PathPrefix,
-							},
-						},
-					},
-					// Strip the routing prefix before forwarding so the member app, which
-					// typically runs the same image as the parent and is unaware of the
-					// shared-host layout, receives paths from "/" (e.g. /testing/health → /health).
-					"filters": []interface{}{
-						map[string]interface{}{
-							"type": "URLRewrite",
-							"urlRewrite": map[string]interface{}{
-								"path": map[string]interface{}{
-									"type":               "ReplacePrefixMatch",
-									"replacePrefixMatch": "/",
-								},
-							},
-						},
-					},
-					"backendRefs": []interface{}{
-						map[string]interface{}{
-							"name": m.Service,
-							"port": int64(svcPort),
-						},
-					},
-				})
-				continue
-			}
-			weight := int64(0)
-			if m.Weight != nil {
-				weight = int64(*m.Weight)
-			}
-			catchAllBackends = append(catchAllBackends, map[string]interface{}{
-				"name":   m.Service,
-				"port":   int64(svcPort),
-				"weight": weight,
-			})
-		}
+	rule := map[string]interface{}{"backendRefs": catchAllBackends}
+	if timeout != "" {
+		rule["timeouts"] = map[string]interface{}{"request": timeout}
 	}
-
-	if len(memberRules) > 0 {
-		// Multi-rule shape: explicit path rules + a "/" catch-all. Gateway API prefers the
-		// longest matching path prefix, so rule order is not load-bearing.
-		rules := append([]interface{}{}, memberRules...)
-		return append(rules, map[string]interface{}{
-			"matches": []interface{}{
-				map[string]interface{}{
-					"path": map[string]interface{}{
-						"type":  "PathPrefix",
-						"value": "/",
-					},
-				},
-			},
-			"backendRefs": catchAllBackends,
-		})
-	}
-	// Default single-rule shape (unchanged for standalone/canary services).
-	return []interface{}{
-		map[string]interface{}{
-			"backendRefs": catchAllBackends,
-		},
-	}
+	return []interface{}{rule}
 }
 
-func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deployv1alpha1.BirService, svcName string, svcPort int32, canaySvcName string, canaryWeight int32) error {
-	routeName := fmt.Sprintf("%s-route", bs.Name)
-	hostnames := r.resolveHostnames(bs)
+func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deployv1alpha1.BirService, svcName string, svcPort int32, canarySvcName string, canaryWeight int32) error {
+	// Build the desired set of HTTPRoutes (one per route entry). Only the pool's
+	// primary owns routes; non-primary members and unexposed services own none.
+	desired := map[string]map[string]interface{}{}
 
-	// A child (route.shareWith set) is reachable only through its parent's HTTPRoute,
-	// so it must not own a route of its own. Also drop the route when not exposed or
-	// no hostname resolves.
-	isChild := bs.Spec.Route != nil && bs.Spec.Route.ShareWith != ""
-	if isChild || !exposeOrDefault(bs) || len(hostnames) == 0 {
-		existing := &unstructured.Unstructured{}
-		existing.SetGroupVersionKind(httpRouteGVK)
-		err := r.Get(ctx, types.NamespacedName{Name: routeName, Namespace: bs.Namespace}, existing)
-		if err == nil {
-			return r.Delete(ctx, existing)
+	if routeIsPrimary(bs) && exposeOrDefault(bs) {
+		entries := []deployv1alpha1.RouteEntry{{Name: "default"}}
+		if bs.Spec.Route != nil && len(bs.Spec.Route.Entries) > 0 {
+			entries = bs.Spec.Route.Entries
 		}
-		return client.IgnoreNotFound(err)
-	}
-
-	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		route := &unstructured.Unstructured{}
-		route.SetGroupVersionKind(httpRouteGVK)
-		route.SetName(routeName)
-		route.SetNamespace(bs.Namespace)
-
-		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, route, func() error {
-			rules := buildHTTPRouteRules(svcName, svcPort, canaySvcName, canaryWeight, bs.Spec.Route)
-
-			route.Object["spec"] = map[string]interface{}{
+		for i, e := range entries {
+			// Hostname: explicit if the catalog set one; else auto-derived per cluster.
+			// The first (primary) route uses the service's default host (+ spec.hostnames
+			// aliases); additional routes get a distinct <name>-<route>-<env> host so two
+			// routes on one pool never collide on the same hostname.
+			var hostnames []string
+			switch {
+			case e.Hostname != "":
+				hostnames = []string{e.Hostname}
+			case i == 0:
+				hostnames = r.resolveHostnames(bs)
+			default:
+				if h := r.routeHostname(bs, e.Name); h != "" {
+					hostnames = []string{h}
+				}
+			}
+			if len(hostnames) == 0 {
+				continue
+			}
+			name := fmt.Sprintf("%s-%s-route", bs.Name, e.Name)
+			desired[name] = map[string]interface{}{
 				"parentRefs": []interface{}{
-					map[string]interface{}{
-						"name":        gatewayName,
-						"namespace":   gatewayNamespace,
-						"sectionName": "http",
-					},
-					map[string]interface{}{
-						"name":        gatewayName,
-						"namespace":   gatewayNamespace,
-						"sectionName": "https",
-					},
+					map[string]interface{}{"name": gatewayName, "namespace": gatewayNamespace, "sectionName": "http"},
+					map[string]interface{}{"name": gatewayName, "namespace": gatewayNamespace, "sectionName": "https"},
 				},
 				"hostnames": toInterfaceSlice(hostnames),
-				"rules":     rules,
+				"rules":     buildHTTPRouteRules(svcName, svcPort, canarySvcName, canaryWeight, e.Timeout),
 			}
+		}
+	}
 
-			route.SetLabels(mergeStringMap(route.GetLabels(), map[string]string{
-				"app.kubernetes.io/name":       bs.Name,
-				"app.kubernetes.io/managed-by": "easy-deploy-operator",
-			}))
+	// Delete any HTTPRoutes we own that are no longer desired (entries removed,
+	// route dropped, instance demoted to non-primary, or expose turned off).
+	listGVK := httpRouteGVK
+	listGVK.Kind = httpRouteGVK.Kind + "List"
+	existing := &unstructured.UnstructuredList{}
+	existing.SetGroupVersionKind(listGVK)
+	if err := r.List(ctx, existing, client.InNamespace(bs.Namespace),
+		client.MatchingLabels{"app.kubernetes.io/name": bs.Name}); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	for i := range existing.Items {
+		item := &existing.Items[i]
+		if _, ok := desired[item.GetName()]; !ok {
+			if err := r.Delete(ctx, item); err != nil && !apierrors.IsNotFound(err) {
+				return err
+			}
+		}
+	}
 
-			if r.TargetIP != "" {
-				route.SetAnnotations(mergeStringMap(route.GetAnnotations(), map[string]string{
-					"external-dns.alpha.kubernetes.io/target": r.TargetIP,
+	// Create/update the desired routes.
+	for name, spec := range desired {
+		name, spec := name, spec
+		if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+			route := &unstructured.Unstructured{}
+			route.SetGroupVersionKind(httpRouteGVK)
+			route.SetName(name)
+			route.SetNamespace(bs.Namespace)
+
+			_, err := controllerutil.CreateOrUpdate(ctx, r.Client, route, func() error {
+				route.Object["spec"] = spec
+				route.SetLabels(mergeStringMap(route.GetLabels(), map[string]string{
+					"app.kubernetes.io/name":       bs.Name,
+					"app.kubernetes.io/managed-by": "easy-deploy-operator",
 				}))
-			}
-
-			return ctrl.SetControllerReference(bs, route, r.Scheme)
-		})
-		return err
-	})
+				if r.TargetIP != "" {
+					route.SetAnnotations(mergeStringMap(route.GetAnnotations(), map[string]string{
+						"external-dns.alpha.kubernetes.io/target": r.TargetIP,
+					}))
+				}
+				return ctrl.SetControllerReference(bs, route, r.Scheme)
+			})
+			return err
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *BirServiceReconciler) metricsEnabled(bs *deployv1alpha1.BirService) (bool, string) {
@@ -1389,7 +1393,9 @@ func (r *BirServiceReconciler) reconcileServiceMonitor(ctx context.Context, bs *
 	monitorName := fmt.Sprintf("%s-monitor", bs.Name)
 	enabled, path := r.metricsEnabled(bs)
 
-	if !enabled {
+	// Non-primary pool members own no Service; the primary's ServiceMonitor already
+	// scrapes the whole pool (all members' pods), so they need no monitor of their own.
+	if !enabled || !routeIsPrimary(bs) {
 		existing := &unstructured.Unstructured{}
 		existing.SetGroupVersionKind(serviceMonitorGVK)
 		err := r.Get(ctx, types.NamespacedName{Name: monitorName, Namespace: bs.Namespace}, existing)

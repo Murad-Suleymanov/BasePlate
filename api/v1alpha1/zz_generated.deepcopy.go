@@ -92,14 +92,9 @@ func (in *BirServiceSpec) DeepCopyInto(out *BirServiceSpec) {
 
 func (in *RouteSpec) DeepCopyInto(out *RouteSpec) {
 	*out = *in
-	if in.Weight != nil {
-		in, out := &in.Weight, &out.Weight
-		*out = new(int32)
-		**out = **in
-	}
-	if in.Members != nil {
-		in, out := &in.Members, &out.Members
-		*out = make([]RouteMember, len(*in))
+	if in.Entries != nil {
+		in, out := &in.Entries, &out.Entries
+		*out = make([]RouteEntry, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
@@ -115,20 +110,20 @@ func (in *RouteSpec) DeepCopy() *RouteSpec {
 	return out
 }
 
-func (in *RouteMember) DeepCopyInto(out *RouteMember) {
+func (in *RouteEntry) DeepCopyInto(out *RouteEntry) {
 	*out = *in
-	if in.Weight != nil {
-		in, out := &in.Weight, &out.Weight
+	if in.Retries != nil {
+		in, out := &in.Retries, &out.Retries
 		*out = new(int32)
 		**out = **in
 	}
 }
 
-func (in *RouteMember) DeepCopy() *RouteMember {
+func (in *RouteEntry) DeepCopy() *RouteEntry {
 	if in == nil {
 		return nil
 	}
-	out := new(RouteMember)
+	out := new(RouteEntry)
 	in.DeepCopyInto(out)
 	return out
 }

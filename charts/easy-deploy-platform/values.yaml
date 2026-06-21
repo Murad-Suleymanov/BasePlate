@@ -385,39 +385,35 @@ crd:
           description: "Post-SIGTERM budget for in-flight requests to finish before SIGKILL. Default 5. Increase for long requests (uploads, streaming)."
     route:
       type: object
-      description: "Shared-hostname routing across BirServices. Chart-populated from the tenant route block. child sets shareWith; parent gets members."
+      description: "Chart-resolved pool routing. Instances sharing a group share one Service (load-balanced pod pool); the primary owns the Service + HTTPRoutes."
       properties:
-        shareWith:
+        group:
           type: string
-          description: "Full name of the parent BirService whose HTTPRoute/hostname to join. When set, this service creates no HTTPRoute of its own (child role)."
-        pathPrefix:
-          type: string
-          description: "Path prefix under the shared host that routes to this child (e.g. /testing). Authoritative copy lives in the parent's members."
-        weight:
-          type: integer
-          format: int32
-          minimum: 0
-          maximum: 100
-          description: "Optional weighted-split percentage on the shared host's catch-all rule (used when pathPrefix is empty)."
-        members:
+          description: "Pool identifier; the pool Service selects the route-group pod label = this value."
+        primary:
+          type: boolean
+          description: "Whether this instance owns the pool's Service and HTTPRoutes. Non-primary members only contribute pods."
+        entries:
           type: array
-          description: "Backends contributed by sharing children (parent role). Chart-populated."
+          description: "Named HTTP front doors (one HTTPRoute each). Set only on the primary."
           items:
             type: object
-            required: [service]
+            required: [name]
             properties:
-              service:
+              name:
                 type: string
-                description: "Child ClusterIP Service name (e.g. hello-csharp-testing-svc)."
-              pathPrefix:
+                description: "Route name (e.g. main, main_slow)."
+              hostname:
                 type: string
-                description: "When set, routes only this path prefix to the member (its own HTTPRoute rule)."
-              weight:
+                description: "Hostname this route is served on. Empty → operator auto-derives."
+              timeout:
+                type: string
+                description: "Per-request timeout (e.g. 15s)."
+              retries:
                 type: integer
                 format: int32
                 minimum: 0
-                maximum: 100
-                description: "When set and pathPrefix empty, adds the member as a weighted backend on the parent's catch-all rule."
+                description: "HTTP retry count."
   statusProperties:
     availableReplicas:
       type: integer

@@ -136,7 +136,7 @@ Uses a dict for state because Go template `range` creates a new variable scope â
 direct `$var = ...` assignments inside `range` don't reliably persist outside.
 */}}
 {{- define "birservice.isMultiInstance" -}}
-{{- $knownKeys := list "name" "owner" "image" "repo" "tag" "imageTag" "dockerfile" "port" "containerPort" "replicas" "hpa" "resources" "hostname" "hostnames" "expose" "metrics" "traffic" "readinessProbe" "livenessProbe" "singleton" "maxDown" "shutdown" "canary" "injectPipeline" -}}
+{{- $knownKeys := list "name" "owner" "image" "repo" "tag" "imageTag" "dockerfile" "port" "containerPort" "replicas" "hpa" "resources" "hostname" "hostnames" "expose" "metrics" "traffic" "readinessProbe" "livenessProbe" "singleton" "maxDown" "shutdown" "canary" "injectPipeline" "route" "routes" "environment" -}}
 {{- $state := dict "hasInstance" false -}}
 {{- range $k, $val := . -}}
   {{- /* `_`-prefixed keys are YAML anchor bases (e.g. _common: &common), not instances. */ -}}
@@ -145,6 +145,45 @@ direct `$var = ...` assignments inside `range` don't reliably persist outside.
   {{- end -}}
 {{- end -}}
 {{- if $state.hasInstance -}}true{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{/*
+Resolve a tenant's route name(s) into the CR route object {group, primary, entries}.
+Args (dict): rnames (list of route names), instance (this instance's key),
+primaryOf (route name -> primary instance), catalog (merged route policies),
+release (Helm release name). The primary route is the first name; group is
+<release>-<primaryRoute>. Only the primary emits entries (the HTTPRoutes).
+*/}}
+{{- define "birservice.resolveRoute" -}}
+{{- $rnames := .rnames -}}
+{{- /* Route names become part of Service/HTTPRoute object names, which must be DNS
+       labels â€” no dots, underscores, or uppercase. Fail early with a clear message. */ -}}
+{{- range $rn := $rnames -}}
+{{- if not (regexMatch "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" ($rn | toString)) -}}
+{{- fail (printf "route name %q must be a DNS label (lowercase letters, digits, hyphens; no dots/underscores)" $rn) -}}
+{{- end -}}
+{{- end -}}
+{{- $primaryRoute := index $rnames 0 | toString -}}
+{{- $isPrimary := eq (get .primaryOf $primaryRoute) .instance -}}
+group: {{ printf "%s-%s" .release $primaryRoute }}
+primary: {{ $isPrimary }}
+{{- if $isPrimary }}
+entries:
+{{- range $rn := $rnames }}
+{{- $rn = $rn | toString }}
+{{- $def := get $.catalog $rn | default dict }}
+  - name: {{ $rn }}
+{{- if $def.hostname }}
+    hostname: {{ $def.hostname }}
+{{- end }}
+{{- if $def.timeout }}
+    timeout: {{ $def.timeout | toString | quote }}
+{{- end }}
+{{- if hasKey $def "retries" }}
+    retries: {{ $def.retries }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- end -}}
 
 {{/*

@@ -11,17 +11,8 @@
       "additionalProperties": false,
       "properties": {
         "inheritFrom":    { "type": "string", "minLength": 1, "description": "Inherit the full config of the named sibling instance (e.g. 'main'); fields declared here override the inherited ones (deep merge). The target instance must not itself use inheritFrom (no chains)." },
-        "route": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "Join this instance to a sibling's shared hostname/HTTPRoute instead of creating its own. The named parent must be a sibling instance that does not itself use route.shareWith.",
-          "required": ["shareWith"],
-          "properties": {
-            "shareWith":  { "type": "string", "minLength": 1, "description": "Name of the sibling instance whose hostname to share (e.g. 'main')." },
-            "pathPrefix": { "type": "string", "pattern": "^/", "description": "Only this path prefix routes to this instance under the shared host (e.g. /testing). The parent serves everything else." },
-            "weight":     { "type": "integer", "minimum": 0, "maximum": 100, "description": "Weighted split percentage on the shared host's catch-all (used when pathPrefix is omitted)." }
-          }
-        },
+        "route":          { "$ref": "#/properties/route" },
+        "routes":         { "$ref": "#/properties/routes" },
         "image":          { "$ref": "#/properties/image" },
         "repo":           { "$ref": "#/properties/repo" },
         "tag":            { "$ref": "#/properties/tag" },
@@ -56,6 +47,33 @@
       "type": "string",
       "minLength": 1,
       "description": "Service owner (free text). Propagated as deploy.easydeploy.io/owner annotation. Typically lives in service.yaml so all environments share the same value."
+    },
+    "route": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Name of the route this instance serves (defined in routes.yaml _routes). Instances sharing a route name share one load-balanced Service (pod pool)."
+    },
+    "routes": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Several route names for one pool: each becomes its own HTTPRoute (own hostname/timeout) pointing at the same Service. The first is the pool's primary route."
+    },
+    "environment": {
+      "type": "string",
+      "description": "Cluster name (dev/prod), injected by ArgoCD. Selects which _routes section applies."
+    },
+    "_routes": {
+      "type": "object",
+      "description": "Route policy catalog for this cluster (lives in routes-<env>.yaml in the service folder). Flat: route name -> {hostname?, timeout?, retries?}.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "hostname": { "type": "string", "description": "Hostname this route is served on. Omit to auto-derive." },
+          "timeout":  { "type": "string", "description": "Per-request timeout (e.g. 15s)." },
+          "retries":  { "type": "integer", "minimum": 0, "description": "HTTP retry count." }
+        }
+      }
     },
     "image": {
       "type": "string",
