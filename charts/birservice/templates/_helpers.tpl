@@ -139,7 +139,8 @@ direct `$var = ...` assignments inside `range` don't reliably persist outside.
 {{- $knownKeys := list "name" "owner" "image" "repo" "tag" "imageTag" "dockerfile" "port" "containerPort" "replicas" "hpa" "resources" "hostname" "hostnames" "expose" "metrics" "traffic" "readinessProbe" "livenessProbe" "singleton" "maxDown" "shutdown" "canary" "injectPipeline" -}}
 {{- $state := dict "hasInstance" false -}}
 {{- range $k, $val := . -}}
-  {{- if and (not (has $k $knownKeys)) (kindIs "map" $val) -}}
+  {{- /* `_`-prefixed keys are YAML anchor bases (e.g. _common: &common), not instances. */ -}}
+  {{- if and (not (has $k $knownKeys)) (not (hasPrefix "_" $k)) (kindIs "map" $val) -}}
     {{- $_ := set $state "hasInstance" true -}}
   {{- end -}}
 {{- end -}}

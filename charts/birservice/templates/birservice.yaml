@@ -45,7 +45,7 @@
        HTTPRoute rule per member. */ -}}
 {{- $routeMembers := dict -}}
 {{- range $iname, $icfg := .Values -}}
-{{- if and (not (has $iname $knownKeys)) (kindIs "map" $icfg) -}}
+{{- if and (not (has $iname $knownKeys)) (not (hasPrefix "_" $iname)) (kindIs "map" $icfg) -}}
 {{- $r := $icfg.route | default dict -}}
 {{- if $r.shareWith -}}
   {{- $parent := $r.shareWith | toString -}}
@@ -79,7 +79,7 @@
 {{- end -}}
 {{- end -}}
 {{- range $instanceName, $instanceCfg := .Values -}}
-{{- if and (not (has $instanceName $knownKeys)) (kindIs "map" $instanceCfg) }}
+{{- if and (not (has $instanceName $knownKeys)) (not (hasPrefix "_" $instanceName)) (kindIs "map" $instanceCfg) }}
 {{- /* Resolve `inheritFrom`: deep-merge this instance ON TOP OF the named sibling
        so it overrides only the fields it declares. Single-level only (the target
        must not itself use inheritFrom) to keep resolution order-independent. */ -}}

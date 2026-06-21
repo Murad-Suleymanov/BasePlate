@@ -34,6 +34,18 @@ if ! command -v yq >/dev/null 2>&1; then
   exit 2
 fi
 
+# Expand YAML anchors and merge keys (<<) up front so cross-field checks see the
+# fully-merged instance config — the same thing Helm renders. yq does not resolve
+# merge keys during normal queries, so without this an instance written as
+# `<<: *base` would appear to have a literal `<<` field and be missing the merged
+# blocks. $_orig keeps the real path for diagnostics; data queries read $file.
+_orig="$file"
+_exploded="$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/birservice-lint.$$.yaml")"
+trap 'rm -f "$_exploded"' EXIT
+if yq 'explode(.)' "$_orig" > "$_exploded" 2>/dev/null && [ -s "$_exploded" ]; then
+  file="$_exploded"
+fi
+
 # Resolve a usable Python 3 interpreter (Windows often only has `python`).
 PY=""
 for _cmd in python3 python; do
@@ -52,11 +64,11 @@ errors=0
 
 # Output format: GitHub Actions annotations in CI, human-readable in terminals.
 if [ -n "${GITHUB_ACTIONS:-}" ]; then
-  note()  { echo "::notice file=$file::$1"; }
-  warn()  { echo "::warning file=$file::$1"; }
-  error() { echo "::error file=$file::$1"; errors=$((errors+1)); }
-  summary_ok()  { echo "$file: OK"; }
-  summary_err() { echo "$file: $errors semantic error(s)"; }
+  note()  { echo "::notice file=$_orig::$1"; }
+  warn()  { echo "::warning file=$_orig::$1"; }
+  error() { echo "::error file=$_orig::$1"; errors=$((errors+1)); }
+  summary_ok()  { echo "$_orig: OK"; }
+  summary_err() { echo "$_orig: $errors semantic error(s)"; }
 else
   if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
     C_RED=$'\033[31m'; C_YELLOW=$'\033[33m'; C_BLUE=$'\033[34m'
@@ -67,18 +79,18 @@ else
   _header_shown=0
   _show_header() {
     if [ "$_header_shown" -eq 0 ]; then
-      echo "${C_BOLD}${file}${C_RESET}"
+      echo "${C_BOLD}${_orig}${C_RESET}"
       _header_shown=1
     fi
   }
   note()  { _show_header; echo "  ${C_BLUE}note${C_RESET}    $1"; }
   warn()  { _show_header; echo "  ${C_YELLOW}warning${C_RESET} $1"; }
   error() { _show_header; echo "  ${C_RED}error${C_RESET}   $1"; errors=$((errors+1)); }
-  summary_ok()  { echo "${C_GREEN}✓${C_RESET} ${C_DIM}${file}${C_RESET}"; }
-  summary_err() { echo "${C_RED}✗${C_RESET} ${file} ${C_DIM}— ${errors} error(s)${C_RESET}"; }
+  summary_ok()  { echo "${C_GREEN}✓${C_RESET} ${C_DIM}${_orig}${C_RESET}"; }
+  summary_err() { echo "${C_RED}✗${C_RESET} ${_orig} ${C_DIM}— ${errors} error(s)${C_RESET}"; }
 fi
 
-base=$(basename "$file")
+base=$(basename "$_orig")
 
 # ─── service.yaml validation ─────────────────────────────────────────────────
 # service.yaml holds shared metadata (repo, owner). No operational fields.
@@ -122,6 +134,7 @@ is_known_key() {
 # multi-instance shape).
 mapfile -t unknown_map_keys < <(yq 'keys | .[]' "$file" | while read -r k; do
   is_known_key "$k" && continue
+  case "$k" in _*) continue ;; esac  # _-prefixed keys are anchor bases, not instances (chart skips them too)
   kind=$(yq ".\"$k\" | type" "$file" 2>/dev/null || echo "")
   [ "$kind" = "!!map" ] && echo "$k"
 done)
