@@ -166,8 +166,12 @@ release (Helm release name). The primary route is the first name; group is
 {{- $primaryRoute := index $rnames 0 | toString -}}
 {{- $isPrimary := eq (get .primaryOf $primaryRoute) .instance -}}
 group: {{ printf "%s-%s" .release $primaryRoute }}
-primary: {{ $isPrimary }}
+{{- /* Emit `primary` only when true. The CR field is `bool omitempty`, so a stored
+       `false` serializes back as absent — emitting `primary: false` here would make
+       ArgoCD diff desired(false) vs live(absent) forever (perpetual OutOfSync). The
+       operator reads absent as non-primary, so omitting it is equivalent and clean. */ -}}
 {{- if $isPrimary }}
+primary: true
 entries:
 {{- range $rn := $rnames }}
 {{- $rn = $rn | toString }}
