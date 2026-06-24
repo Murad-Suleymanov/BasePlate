@@ -39,6 +39,14 @@ hpa:
 {{- if gt $targetRPS 0 }}
   targetRPS: {{ $targetRPS }}
 {{- end }}
+{{- $scaleType := (get $hpa "scaleType") | default "" | toString | trim }}
+{{- if $scaleType }}
+  scaleType: {{ $scaleType | quote }}
+{{- $target := (get $hpa "target") | default 0 | int }}
+{{- if gt $target 0 }}
+  target: {{ $target }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- $resources := $v.resources | default dict }}
 {{- $requests := (get $resources "requests") | default dict }}

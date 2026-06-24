@@ -1168,13 +1168,7 @@ func (r *BirServiceReconciler) reconcileHPA(ctx context.Context, bs *deployv1alp
 		return client.IgnoreNotFound(err)
 	}
 
-	if bs.Spec.HPA != nil && bs.Spec.HPA.TargetRPS != nil && *bs.Spec.HPA.TargetRPS > 0 && bs.Spec.Traffic == nil {
-		// RPS scaling reads istio_requests_total, which only exists for
-		// waypoint-enrolled workloads. Without spec.traffic the workload has no
-		// waypoint, the external metric stays empty, and the HPA can't scale up.
-		log.FromContext(ctx).Info("spec.hpa.targetRPS is set but spec.traffic is nil; "+
-			"no waypoint means no L7 request metrics — RPS-based HPA will not scale", "name", bs.Name)
-	}
+	warnMissingHPAPrereqs(ctx, bs)
 
 	metrics := hpaMetrics(bs, depName)
 
@@ -1199,56 +1193,147 @@ func (r *BirServiceReconciler) reconcileHPA(ctx context.Context, bs *deployv1alp
 	return err
 }
 
-// hpaMetrics builds the autoscaling/v2 metric list for a BirService HPA.
+// workerMetricName is the Prometheus series the "worker" HPA signal scales on: a
+// language-agnostic per-pod worker-saturation percentage (0-100), produced by the
+// app-worker-scaling recording rule (100 * busy / max workers, normalized across
+// runtimes) and surfaced as a Pods custom metric by prometheus-adapter. Because it
+// is already a percentage, the HPA target is a utilization % just like cpu/memory.
+const workerMetricName = "app_worker_utilization"
+
+// warnMissingHPAPrereqs logs when a configured scaling signal can't actually
+// fire because its data source is absent: rps needs a waypoint (spec.traffic) for
+// L7 request metrics, and worker needs a ServiceMonitor (spec.metrics) to scrape
+// the php-fpm exporter. The HPA is still created — these signals just stay idle.
+func warnMissingHPAPrereqs(ctx context.Context, bs *deployv1alpha1.BirService) {
+	if bs.Spec.HPA == nil {
+		return
+	}
+	logger := log.FromContext(ctx)
+
+	scaleType := strings.ToLower(strings.TrimSpace(bs.Spec.HPA.ScaleType))
+	wantsRPS := scaleType == "rps" || (scaleType == "" && bs.Spec.HPA.TargetRPS != nil && *bs.Spec.HPA.TargetRPS > 0)
+	wantsWorker := scaleType == "worker" || scaleType == "workers"
+
+	if wantsRPS && bs.Spec.Traffic == nil {
+		logger.Info("hpa rps signal is set but spec.traffic is nil; no waypoint means "+
+			"no L7 request metrics — RPS-based scaling will not fire", "name", bs.Name)
+	}
+	if wantsWorker && (bs.Spec.Metrics == nil || !bs.Spec.Metrics.Enabled) {
+		logger.Info("hpa worker signal is set but spec.metrics is disabled; without a "+
+			"ServiceMonitor the php-fpm metric is never scraped — worker scaling will not fire", "name", bs.Name)
+	}
+}
+
+// defaultUtilization is the CPU/memory utilization target used when the developer
+// names a cpu/memory signal without an explicit target (and the platform fallback).
+const defaultUtilization int32 = 80
+
+// hpaMetrics builds the autoscaling/v2 metric for a BirService HPA.
 //
-// When spec.hpa.targetRPS is set, the HPA scales on an External metric
-// (istio_requests_per_second) served by prometheus-adapter from the mesh's
-// istio_requests_total counter. The metric is selected by destination workload +
-// namespace and uses an AverageValue target, so the HPA divides the workload's
-// total request rate by targetRPS to choose a replica count. This requires the
-// workload to be waypoint-enrolled (spec.traffic) — only then does Istio emit L7
-// request metrics for it.
+// The developer names a single signal in spec.hpa.scaleType with a per-pod
+// spec.hpa.target; this resolves it into the matching autoscaling/v2 source:
 //
-// Otherwise the HPA scales on CPU utilization at 80% (the platform default),
-// served by metrics-server.
+//	cpu    → Resource (CPU)    utilization %   — metrics-server
+//	memory → Resource (memory) utilization %   — metrics-server
+//	rps    → External istio_requests_per_second (AverageValue, req/s) — prometheus-adapter
+//	worker → Pods app_worker_utilization        (AverageValue, %)     — prometheus-adapter
+//
+// cpu/memory/worker are utilization percentages and default to 80% when target is
+// omitted; rps is an absolute req/s and has no default. The legacy
+// spec.hpa.targetRPS is honored as an rps signal when scaleType is empty. When
+// nothing resolves, the HPA falls back to CPU utilization at 80% (the default).
 func hpaMetrics(bs *deployv1alpha1.BirService, depName string) []autoscalingv2.MetricSpec {
-	if bs.Spec.HPA != nil && bs.Spec.HPA.TargetRPS != nil && *bs.Spec.HPA.TargetRPS > 0 {
-		targetRPS := resource.NewQuantity(int64(*bs.Spec.HPA.TargetRPS), resource.DecimalSI)
-		return []autoscalingv2.MetricSpec{{
-			Type: autoscalingv2.ExternalMetricSourceType,
-			External: &autoscalingv2.ExternalMetricSource{
-				Metric: autoscalingv2.MetricIdentifier{
-					Name: "istio_requests_per_second",
-					// destination_workload picks this workload's series; the
-					// destination_workload_namespace label is injected by
-					// prometheus-adapter from the HPA's namespace (resource
-					// override), so two same-named workloads in different
-					// namespaces don't cross-count.
-					Selector: &metav1.LabelSelector{
-						MatchLabels: map[string]string{
-							"destination_workload": depName,
-						},
-					},
-				},
-				Target: autoscalingv2.MetricTarget{
-					Type:         autoscalingv2.AverageValueMetricType,
-					AverageValue: targetRPS,
-				},
-			},
-		}}
+	if bs.Spec.HPA != nil {
+		target := bs.Spec.HPA.Target
+		switch strings.ToLower(strings.TrimSpace(bs.Spec.HPA.ScaleType)) {
+		case "cpu":
+			return []autoscalingv2.MetricSpec{resourceUtilizationMetric(corev1.ResourceCPU, orDefault(target, defaultUtilization))}
+		case "memory", "mem":
+			return []autoscalingv2.MetricSpec{resourceUtilizationMetric(corev1.ResourceMemory, orDefault(target, defaultUtilization))}
+		case "rps":
+			if target > 0 {
+				return []autoscalingv2.MetricSpec{rpsExternalMetric(depName, target)}
+			}
+		case "worker", "workers":
+			// app_worker_utilization is a percentage; reuse the cpu/memory default.
+			return []autoscalingv2.MetricSpec{podsAverageMetric(workerMetricName, orDefault(target, defaultUtilization))}
+		}
+
+		// Backward compatibility: the legacy targetRPS knob is an rps signal,
+		// used only when scaleType didn't already select one.
+		if bs.Spec.HPA.TargetRPS != nil && *bs.Spec.HPA.TargetRPS > 0 {
+			return []autoscalingv2.MetricSpec{rpsExternalMetric(depName, *bs.Spec.HPA.TargetRPS)}
+		}
 	}
 
-	targetCPU := int32(80)
-	return []autoscalingv2.MetricSpec{{
+	return []autoscalingv2.MetricSpec{resourceUtilizationMetric(corev1.ResourceCPU, defaultUtilization)}
+}
+
+// orDefault returns v when it is a positive value, else def.
+func orDefault(v, def int32) int32 {
+	if v > 0 {
+		return v
+	}
+	return def
+}
+
+// resourceUtilizationMetric builds a Resource metric (CPU or memory) targeting an
+// average utilization percentage of the container's request, served by metrics-server.
+func resourceUtilizationMetric(name corev1.ResourceName, targetPercent int32) autoscalingv2.MetricSpec {
+	pct := targetPercent
+	return autoscalingv2.MetricSpec{
 		Type: autoscalingv2.ResourceMetricSourceType,
 		Resource: &autoscalingv2.ResourceMetricSource{
-			Name: corev1.ResourceCPU,
+			Name: name,
 			Target: autoscalingv2.MetricTarget{
 				Type:               autoscalingv2.UtilizationMetricType,
-				AverageUtilization: &targetCPU,
+				AverageUtilization: &pct,
 			},
 		},
-	}}
+	}
+}
+
+// rpsExternalMetric builds the External istio_requests_per_second metric for a
+// per-pod requests/sec target. The metric is served by prometheus-adapter from
+// the mesh's istio_requests_total counter; destination_workload picks this
+// workload's series while the namespace label is injected by the adapter from the
+// HPA's namespace (resource override), so two same-named workloads in different
+// namespaces don't cross-count. AverageValue divides total mesh RPS by the target.
+func rpsExternalMetric(depName string, targetRPS int32) autoscalingv2.MetricSpec {
+	return autoscalingv2.MetricSpec{
+		Type: autoscalingv2.ExternalMetricSourceType,
+		External: &autoscalingv2.ExternalMetricSource{
+			Metric: autoscalingv2.MetricIdentifier{
+				Name: "istio_requests_per_second",
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"destination_workload": depName,
+					},
+				},
+			},
+			Target: autoscalingv2.MetricTarget{
+				Type:         autoscalingv2.AverageValueMetricType,
+				AverageValue: resource.NewQuantity(int64(targetRPS), resource.DecimalSI),
+			},
+		},
+	}
+}
+
+// podsAverageMetric builds a Pods custom metric targeting an average per-pod value
+// (e.g. worker-utilization %). prometheus-adapter serves the named series under
+// custom.metrics.k8s.io, associated to the workload's pods; the HPA averages it
+// across the pool and divides by the target to pick a replica count.
+func podsAverageMetric(metricName string, target int32) autoscalingv2.MetricSpec {
+	return autoscalingv2.MetricSpec{
+		Type: autoscalingv2.PodsMetricSourceType,
+		Pods: &autoscalingv2.PodsMetricSource{
+			Metric: autoscalingv2.MetricIdentifier{Name: metricName},
+			Target: autoscalingv2.MetricTarget{
+				Type:         autoscalingv2.AverageValueMetricType,
+				AverageValue: resource.NewQuantity(int64(target), resource.DecimalSI),
+			},
+		},
+	}
 }
 
 // buildHTTPRouteRules constructs the single catch-all rule for a pool's HTTPRoute:

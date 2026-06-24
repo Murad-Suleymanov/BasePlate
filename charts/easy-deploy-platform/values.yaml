@@ -242,7 +242,16 @@ crd:
           type: integer
           format: int32
           minimum: 1
-          description: "Scale on Istio requests-per-second (per pod) instead of CPU. Requires spec.traffic."
+          description: "Legacy RPS knob (equivalent to scaleType: rps). Prefer scaleType. Requires spec.traffic."
+        scaleType:
+          type: string
+          enum: ["cpu", "memory", "rps", "worker"]
+          description: "The single signal the HPA scales on. cpu/memory/worker = utilization %; rps = Istio requests/sec per pod (integer, needs spec.traffic). worker = worker-pool saturation % (needs spec.metrics). Omit to default to CPU 80%."
+        target:
+          type: integer
+          format: int32
+          minimum: 1
+          description: "Per-pod target for scaleType. cpu/memory/worker: utilization % (defaults to 80). rps: requests/sec per pod (integer, required)."
     resources:
       type: object
       description: "Container resource requests/limits."

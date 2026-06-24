@@ -231,10 +231,14 @@ expose: true
 # When set, HPA is NOT created (replicas wins).
 replicas: 1
 
-# Horizontal Pod Autoscaler. Both fields required together.
+# Horizontal Pod Autoscaler. min/max required together. Optionally pick ONE
+# scaling signal via scaleType (cpu/memory/rps/worker) + a per-pod target — the
+# platform wires up the metric. Omit scaleType to default to CPU at 80%.
 hpa:
   minReplicas: 2
-  maxReplicas: 5
+  maxReplicas: 10
+  scaleType: cpu      # cpu | memory | rps | worker
+  target: 70          # cpu/memory: util %; rps: req/s; worker: busy workers
 
 # App can only run one version at a time (leader-elected, exclusive lock,
 # in-memory state). Default false → zero-downtime rolling deploy.
@@ -384,13 +388,31 @@ Fixed pod count. Default `1`. When set, HPA is not created.
 
 #### `hpa`
 
-Pair of `minReplicas` + `maxReplicas`. Both must be set together. The HPA uses CPU 80% target.
+`minReplicas` + `maxReplicas` (both required together) bound the replica range.
+Optionally pick **one** scaling signal via `scaleType` plus a per-pod `target`; the
+platform resolves the underlying metric. Omit `scaleType` to default to **CPU at 80%**.
 
 ```yaml
 hpa:
   minReplicas: 2
   maxReplicas: 10
+  scaleType: cpu      # cpu | memory | rps | worker
+  target: 70          # % for cpu/memory/worker; req/s for rps
 ```
+
+| `scaleType` | `target` | Prerequisite |
+|-------------|----------|--------------|
+| `cpu` | CPU utilization % (default 80) | — |
+| `memory` | memory utilization % (default 80) | — |
+| `rps` | requests/sec per pod (integer) | `traffic` (waypoint) |
+| `worker` | worker-pool saturation % (default 80) | `metrics` + worker exporter |
+
+`target` is a utilization **%** for `cpu`/`memory`/`worker` (defaults to 80) and an
+**integer** req/s for `rps` (required). `worker` is language-agnostic — a central
+recording rule normalizes each runtime's busy/max worker gauges into one
+`app_worker_utilization` %. A signal whose prerequisite is missing is created but
+stays idle (the operator logs a warning). The legacy `targetRPS` equals
+`scaleType: rps`.
 
 #### `singleton`
 

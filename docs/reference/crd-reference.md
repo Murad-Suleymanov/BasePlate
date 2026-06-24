@@ -49,7 +49,7 @@ kubectl explain birservices.spec.singleton   # field-level docs
 | `hostname` | string | `<name>-<ns>.<baseDomain>` | External DNS name. |
 | `expose` | bool | `true` | `false` = ClusterIP-only, no HTTPRoute/DNS. |
 | `replicas` | int32 (≥0) | `1` | Fixed count. Wins over HPA when set. |
-| `hpa` | object | — | `minReplicas` + `maxReplicas` (both required); optional `targetRPS` scales on Istio requests/sec instead of CPU. |
+| `hpa` | object | — | `minReplicas` + `maxReplicas` (both required); optional `metrics` list of scaling signals (cpu/memory/rps/worker). Legacy `targetRPS` still accepted. |
 | `resources` | object | requests cpu=75m mem=200Mi; limits 2× | Container resource block. |
 | `readinessProbe` | object | TCP default | `path` (required) + `port`. |
 | `livenessProbe` | object | omitted | `path` (required) + `port`. |
@@ -67,19 +67,36 @@ kubectl explain birservices.spec.singleton   # field-level docs
 ```yaml
 hpa:
   minReplicas: 2     # int32, ≥1 enables HPA; both must be set
-  maxReplicas: 5     # int32, ≥1
-  targetRPS: 100     # int32, optional — scale on Istio requests/sec per pod
+  maxReplicas: 10    # int32, ≥1
+  scaleType: worker  # cpu | memory | rps | worker — the single signal to scale on
+  target: 70         # per-pod target (% for cpu/memory/worker; req/s for rps)
 ```
 
 Both `minReplicas`/`maxReplicas` required together to take effect. If `replicas` is set anywhere on the spec, HPA is *not* created (the lint warns).
 
-**`targetRPS`** switches the HPA from CPU (default 80% utilization, via metrics-server)
-to Istio **requests-per-second per pod**, served by `prometheus-adapter` as the
-external metric `istio_requests_per_second` (derived from `istio_requests_total`).
-The HPA divides the workload's total mesh RPS by `targetRPS` to pick a replica
-count. **Requires `spec.traffic`** — only waypoint-enrolled workloads emit L7
-request metrics; a plain (ztunnel-only) workload reports L4 bytes/connections, so
-RPS scaling on it never fires (the operator logs a warning).
+**`scaleType`** names the one signal the HPA scales on; the developer only picks the
+type and a per-pod **`target`**, and the operator resolves the underlying metric
+source. `target` is a **utilization %** for `cpu`/`memory`/`worker` and an **integer
+req/s** for `rps`. When `scaleType` is omitted (and `targetRPS` unset), the HPA
+defaults to **CPU at 80%**.
+
+| `scaleType` | Source | `target` means | Prerequisite |
+|-------------|--------|----------------|--------------|
+| `cpu` | Resource, metrics-server | CPU utilization % of request (default 80) | — |
+| `memory` | Resource, metrics-server | memory utilization % of request (default 80) | — |
+| `rps` | External `istio_requests_per_second`, prometheus-adapter | requests/sec per pod (integer) | `spec.traffic` (waypoint L7 metrics) |
+| `worker` | Pods `app_worker_utilization`, prometheus-adapter | worker-pool saturation % = 100×busy/max (default 80) | `spec.metrics` + app exposes a worker exporter |
+
+`target` defaults to 80 for the percentage signals (`cpu`/`memory`/`worker`) and is
+required for `rps`. The `worker` percentage is language-agnostic: a central
+recording rule (`app-worker-scaling`) normalizes each runtime's busy/max worker
+gauges (PHP-FPM, Java thread pool, …) into one `app_worker_utilization` series, so
+the same `scaleType: worker` works for any language. If the chosen signal's
+prerequisite is missing (e.g. `rps` without `traffic`, `worker` without `metrics`)
+the HPA is still created but stays idle, and the operator logs a warning.
+
+**`targetRPS`** (legacy) equals `scaleType: rps` with `target: N` and is kept for
+backward compatibility — prefer `scaleType`. If `scaleType` is set, `targetRPS` is ignored.
 
 ### `spec.resources`
 

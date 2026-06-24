@@ -58,3 +58,82 @@ func TestHPAMetricsRPSExternal(t *testing.T) {
 		t.Fatalf("expected AverageValue=100 target, got %+v", ext.Target)
 	}
 }
+
+func TestHPAMetricsScaleTypeMemory(t *testing.T) {
+	bs := &deployv1alpha1.BirService{}
+	bs.Namespace = "tenant-a"
+	bs.Spec.HPA = &deployv1alpha1.HPASpec{
+		MinReplicas: int32p(2),
+		MaxReplicas: int32p(10),
+		ScaleType:   "memory",
+		Target:      75,
+	}
+
+	metrics := hpaMetrics(bs, "app")
+	if len(metrics) != 1 || metrics[0].Type != autoscalingv2.ResourceMetricSourceType {
+		t.Fatalf("expected a single Resource metric, got %+v", metrics)
+	}
+	res := metrics[0].Resource
+	if res == nil || res.Name != corev1.ResourceMemory ||
+		res.Target.AverageUtilization == nil || *res.Target.AverageUtilization != 75 {
+		t.Fatalf("expected memory util 75%%, got %+v", res)
+	}
+}
+
+// cpu/memory without an explicit target default to 80%.
+func TestHPAMetricsScaleTypeCPUDefaultsTarget(t *testing.T) {
+	bs := &deployv1alpha1.BirService{}
+	bs.Namespace = "tenant-a"
+	bs.Spec.HPA = &deployv1alpha1.HPASpec{MinReplicas: int32p(1), MaxReplicas: int32p(3), ScaleType: "cpu"}
+
+	metrics := hpaMetrics(bs, "app")
+	res := metrics[0].Resource
+	if res == nil || res.Name != corev1.ResourceCPU ||
+		res.Target.AverageUtilization == nil || *res.Target.AverageUtilization != 80 {
+		t.Fatalf("expected CPU util default 80%%, got %+v", res)
+	}
+}
+
+func TestHPAMetricsScaleTypeRPSAndWorker(t *testing.T) {
+	bs := &deployv1alpha1.BirService{}
+	bs.Namespace = "tenant-a"
+
+	bs.Spec.HPA = &deployv1alpha1.HPASpec{MinReplicas: int32p(2), MaxReplicas: int32p(8), ScaleType: "rps", Target: 100}
+	if m := hpaMetrics(bs, "app"); len(m) != 1 || m[0].Type != autoscalingv2.ExternalMetricSourceType ||
+		m[0].External.Metric.Name != "istio_requests_per_second" || m[0].External.Target.AverageValue.Value() != 100 {
+		t.Fatalf("expected rps external 100, got %+v", m)
+	}
+
+	// worker target is a utilization % (per-pod), served as a Pods metric.
+	bs.Spec.HPA = &deployv1alpha1.HPASpec{MinReplicas: int32p(2), MaxReplicas: int32p(8), ScaleType: "worker", Target: 70}
+	if m := hpaMetrics(bs, "app"); len(m) != 1 || m[0].Type != autoscalingv2.PodsMetricSourceType ||
+		m[0].Pods.Metric.Name != "app_worker_utilization" || m[0].Pods.Target.AverageValue.Value() != 70 {
+		t.Fatalf("expected worker pods 70%%, got %+v", m)
+	}
+
+	// worker, like cpu/memory, defaults to 80% when target is omitted.
+	bs.Spec.HPA = &deployv1alpha1.HPASpec{MinReplicas: int32p(2), MaxReplicas: int32p(8), ScaleType: "worker"}
+	if m := hpaMetrics(bs, "app"); len(m) != 1 || m[0].Pods == nil ||
+		m[0].Pods.Target.AverageValue.Value() != 80 {
+		t.Fatalf("expected worker default 80%%, got %+v", m)
+	}
+}
+
+// scaleType wins over the legacy targetRPS.
+func TestHPAMetricsScaleTypeWinsOverLegacy(t *testing.T) {
+	bs := &deployv1alpha1.BirService{}
+	bs.Namespace = "tenant-a"
+	bs.Spec.HPA = &deployv1alpha1.HPASpec{
+		MinReplicas: int32p(1),
+		MaxReplicas: int32p(5),
+		TargetRPS:   int32p(50),
+		ScaleType:   "cpu",
+		Target:      60,
+	}
+
+	metrics := hpaMetrics(bs, "app")
+	if len(metrics) != 1 || metrics[0].Resource == nil ||
+		metrics[0].Resource.Name != corev1.ResourceCPU || *metrics[0].Resource.Target.AverageUtilization != 60 {
+		t.Fatalf("expected scaleType cpu=60 to win over legacy targetRPS, got %+v", metrics)
+	}
+}

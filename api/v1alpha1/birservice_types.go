@@ -217,15 +217,30 @@ type HPASpec struct {
 	MinReplicas *int32 `json:"minReplicas,omitempty"`
 	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
 
-	// TargetRPS, when set, scales on Istio requests-per-second instead of CPU.
-	// The operator emits an autoscaling/v2 HPA with an External metric
-	// (istio_requests_per_second, served by prometheus-adapter) targeting this
-	// average requests/sec per pod. HPA divides the workload's total mesh RPS by
-	// the target to pick a replica count.
-	// Requires spec.traffic so the workload gets a waypoint — L7 request metrics
-	// (istio_requests_total) only exist for waypoint-enrolled services; a plain
-	// ztunnel-only workload reports L4 bytes/connections, not requests.
-	// Ignored when spec.replicas is set. When omitted, HPA scales on CPU at 80%.
+	// ScaleType selects the single signal the HPA scales on. The developer only
+	// names the signal; the operator resolves the underlying metric source
+	// (resource / external / pods) and target shape:
+	//   cpu    — average CPU utilization across pods (Target is a % of the CPU
+	//            request, default 80). Resource metric, served by metrics-server.
+	//   memory — average memory utilization across pods (Target is a % of the
+	//            memory request, default 80). Resource metric, metrics-server.
+	//   rps    — Istio requests-per-second per pod (Target is req/s). External
+	//            metric istio_requests_per_second; requires spec.traffic (waypoint).
+	//   worker — worker-pool saturation per pod (Target is a utilization %). Pods
+	//            metric app_worker_utilization = 100*busy/max workers, normalized
+	//            across runtimes; requires spec.metrics (ServiceMonitor).
+	// Empty → CPU at 80% (the platform default).
+	ScaleType string `json:"scaleType,omitempty"`
+
+	// Target is the per-pod threshold for ScaleType. For cpu/memory/worker it is a
+	// utilization percentage (defaults to 80 when omitted); for rps it is an
+	// absolute requests/sec per pod and is required (no default).
+	Target int32 `json:"target,omitempty"`
+
+	// TargetRPS is the legacy RPS knob, kept for backward compatibility. It is
+	// equivalent to scaleType: rps with target: N. Prefer scaleType for new
+	// configs; if scaleType is already set, TargetRPS is ignored. Like the rps
+	// signal it requires spec.traffic. Ignored when spec.replicas is set.
 	TargetRPS *int32 `json:"targetRPS,omitempty"`
 }
 
