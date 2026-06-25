@@ -31,6 +31,13 @@ const (
 	// labelRouteGroup marks the pool a pod belongs to. The pool's Service selects
 	// this label, so instances sharing a route name are load-balanced as one pool.
 	labelRouteGroup = "deploy.easydeploy.io/route-group"
+	// labelCanonicalName / labelCanonicalRevision pin a pod's Istio canonical
+	// service for telemetry. The Deployment selector uses app.kubernetes.io/name
+	// (immutable) set to the per-instance name, which would make every pool
+	// instance its own canonical service and mis-attribute traffic. Setting these
+	// pod-template labels to the app name groups all instances of one app under it.
+	labelCanonicalName     = "service.istio.io/canonical-name"
+	labelCanonicalRevision = "service.istio.io/canonical-revision"
 	// waypointOptionsCM is the ConfigMap referenced by the waypoint Gateway's
 	// spec.infrastructure.parametersRef. Its horizontalPodAutoscaler key carries the
 	// HPA spec Istio applies to the auto-generated waypoint Deployment.

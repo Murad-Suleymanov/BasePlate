@@ -200,6 +200,14 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 			// app.kubernetes.io/name — immutable — so this is pod-template only).
 			// The pool's Service selects this label, spanning every member's pods.
 			templateLabels[labelRouteGroup] = routeGroup(bs)
+			// Istio canonical service: app.kubernetes.io/name (the immutable selector)
+			// is the per-instance name, so without this every pool instance reports as
+			// a separate canonical service and pool traffic is mis-attributed (shows as
+			// unknown in mesh dashboards). Pin the canonical name to the app so main +
+			// testing report under one app; destination_workload still distinguishes
+			// each instance. Standalone apps already equal their app name (no-op).
+			templateLabels[labelCanonicalName] = appName(bs)
+			templateLabels[labelCanonicalRevision] = "latest"
 			if bsNeedsWaypoint(bs) {
 				templateLabels[labelUseWaypoint] = waypointName
 			}
@@ -769,49 +777,6 @@ func (r *BirServiceReconciler) updateBuildStatus(ctx context.Context, req ctrl.R
 		}
 		return r.Status().Update(ctx, &latest)
 	})
-}
-
-// fanoutBuildTag propagates a verified build result to every other instance of
-// the same app (same source repo) in the namespace, so all instances always run
-// the identical image. The controller's job-success path only records the tag on
-// the instance whose Job ran; without fan-out a sibling could drift (e.g. main on
-// a fresh tag while testing stays on an old one). The image is already confirmed
-// pullable by the caller, so siblings won't be pushed onto a phantom tag.
-func (r *BirServiceReconciler) fanoutBuildTag(ctx context.Context, bs *deployv1alpha1.BirService, image, tag string) {
-	l := log.FromContext(ctx)
-	var list deployv1alpha1.BirServiceList
-	if err := r.List(ctx, &list, client.InNamespace(bs.Namespace)); err != nil {
-		l.Error(err, "fan-out: failed to list BirServices")
-		return
-	}
-	for i := range list.Items {
-		sib := &list.Items[i]
-		if sib.Name == bs.Name || appName(sib) != appName(bs) {
-			continue
-		}
-		// A sibling pinned to a rollback tag stays on it; don't override.
-		if sib.Spec.ImageTag != "" {
-			continue
-		}
-		if sib.Status.BuildStatus == "Succeeded" && sib.Status.BuildTag == tag {
-			continue
-		}
-		key := types.NamespacedName{Name: sib.Name, Namespace: sib.Namespace}
-		if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-			var latest deployv1alpha1.BirService
-			if err := r.Get(ctx, key, &latest); err != nil {
-				return err
-			}
-			latest.Status.BuildImage = image
-			latest.Status.BuildStatus = "Succeeded"
-			latest.Status.BuildTag = tag
-			return r.Status().Update(ctx, &latest)
-		}); err != nil {
-			l.Error(err, "fan-out: failed to update sibling build status", "sibling", sib.Name)
-		} else {
-			l.Info("fan-out: propagated build tag to sibling", "sibling", sib.Name, "tag", tag)
-		}
-	}
 }
 
 var k8sNameRegex = regexp.MustCompile(`[^a-z0-9-]`)
