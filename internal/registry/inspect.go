@@ -31,12 +31,14 @@ type containerConfig struct {
 	Entrypoint   []string            `json:"Entrypoint"`
 }
 
-// ManifestExists reports whether the registry actually holds a manifest for
-// name:tag. A Kaniko build Job can exit 0 without the image landing in the
-// registry (push failure, GC), so callers use this to confirm an image is
-// pullable before marking a build done or rolling a deployment onto the tag —
-// otherwise the pod just ImagePullBackOffs.
-func ManifestExists(registryHost, name, tag string) bool {
+// ImagePullable reports whether name:tag can actually be pulled from the registry.
+// A Kaniko build Job can exit 0 without the image landing (push failure), and a
+// registry GC can drop blob content while leaving the manifest tag in place — in
+// both cases a pod just ImagePullBackOffs. So checking the manifest alone is not
+// enough: we also confirm the referenced config blob is present, exactly as the
+// kubelet would when pulling. Callers use this to gate marking a build done or
+// rolling a deployment onto the tag.
+func ImagePullable(registryHost, name, tag string) bool {
 	manifestURL := fmt.Sprintf("http://%s/v2/%s/manifests/%s", registryHost, name, tag)
 
 	req, err := http.NewRequest("GET", manifestURL, nil)
@@ -46,16 +48,35 @@ func ManifestExists(registryHost, name, tag string) bool {
 	req.Header.Set("Accept", strings.Join([]string{
 		"application/vnd.oci.image.manifest.v1+json",
 		"application/vnd.docker.distribution.manifest.v2+json",
-		"application/vnd.oci.image.index.v1+json",
-		"application/vnd.docker.distribution.manifest.list.v2+json",
 	}, ", "))
 
 	resp, err := httpClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return false
+	}
+	body, err := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+
+	var m manifest
+	if err := json.Unmarshal(body, &m); err != nil || m.Config.Digest == "" {
+		return false
+	}
+
+	// The manifest tag can survive a blob GC that removed the actual content;
+	// confirm the config blob the manifest points at is still served.
+	blobURL := fmt.Sprintf("http://%s/v2/%s/blobs/%s", registryHost, name, m.Config.Digest)
+	blobResp, err := httpClient.Get(blobURL)
+	if err != nil {
+		return false
+	}
+	defer blobResp.Body.Close()
+	return blobResp.StatusCode == http.StatusOK
 }
 
 // InspectPort queries the registry v2 API and returns the first EXPOSE port

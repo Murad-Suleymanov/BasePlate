@@ -480,7 +480,7 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 	// After first successful build, use image from registry (pipeline builds on push, notifies via webhook).
 	// Skip the rollback case (spec.imageTag) — that's an operator-pinned tag we trust as-is.
 	if bs.Status.BuildStatus == "Succeeded" && bs.Spec.ImageTag == "" &&
-		!registry.ManifestExists(registryURL, appName(bs), imageTag) {
+		!registry.ImagePullable(registryURL, appName(bs), imageTag) {
 		// The recorded BuildTag is no longer pullable (push never landed, or GC'd).
 		// Don't redeploy onto a phantom image — drop back to needing a rebuild so a
 		// real image gets pushed, and leave the current deployment untouched.
@@ -632,7 +632,7 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 		// manifest isn't actually pullable, marking the build Succeeded would roll
 		// the deployment onto a tag that just ImagePullBackOffs. Treat it as failed
 		// and requeue so the build retries, leaving the last good image in place.
-		if !registry.ManifestExists(registryURL, appName(bs), imageTag) {
+		if !registry.ImagePullable(registryURL, appName(bs), imageTag) {
 			l.Error(nil, "build job completed but image is not in the registry; not deploying", "image", buildImage)
 			if _, err := r.updateBuildStatus(ctx, req, bs, buildImage, "Failed", imageTag); err != nil {
 				return ctrl.Result{}, err
