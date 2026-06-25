@@ -31,6 +31,33 @@ type containerConfig struct {
 	Entrypoint   []string            `json:"Entrypoint"`
 }
 
+// ManifestExists reports whether the registry actually holds a manifest for
+// name:tag. A Kaniko build Job can exit 0 without the image landing in the
+// registry (push failure, GC), so callers use this to confirm an image is
+// pullable before marking a build done or rolling a deployment onto the tag —
+// otherwise the pod just ImagePullBackOffs.
+func ManifestExists(registryHost, name, tag string) bool {
+	manifestURL := fmt.Sprintf("http://%s/v2/%s/manifests/%s", registryHost, name, tag)
+
+	req, err := http.NewRequest("GET", manifestURL, nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Accept", strings.Join([]string{
+		"application/vnd.oci.image.manifest.v1+json",
+		"application/vnd.docker.distribution.manifest.v2+json",
+		"application/vnd.oci.image.index.v1+json",
+		"application/vnd.docker.distribution.manifest.list.v2+json",
+	}, ", "))
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
 // InspectPort queries the registry v2 API and returns the first EXPOSE port
 // from the image config. Returns 0 if no port is found or on error.
 func InspectPort(registryHost, name, tag string) int32 {
