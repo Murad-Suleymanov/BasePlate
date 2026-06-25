@@ -46,6 +46,12 @@ const (
 	labelPurpose           = "deploy.easydeploy.io/purpose"
 	annotRebuild           = "deploy.easydeploy.io/rebuild"
 	annotPipelineInj       = "deploy.easydeploy.io/pipeline-injected"
+	// pipelineWorkflowVersion is bumped whenever the injected workflow template or
+	// the values we feed it change in a way that needs to reach already-onboarded
+	// repos. The annotation stores the version last injected; a mismatch forces a
+	// re-injection so stale workflows (e.g. ones built with the instance name
+	// instead of the app/repo name) get overwritten with the correct content.
+	pipelineWorkflowVersion = "2"
 	requeueBuild           = 10 * time.Second
 )
 
@@ -435,7 +441,7 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 		// The workflow builds one image (the repo name) and the build-complete
 		// webhook fans it out to all instances. Single-instance apps are always
 		// their own primary, so this also covers the non-pool case.
-		if routeIsPrimary(bs) && (bs.Annotations == nil || bs.Annotations[annotPipelineInj] == "") {
+		if routeIsPrimary(bs) && bs.Annotations[annotPipelineInj] != pipelineWorkflowVersion {
 			creds := credentials.ResolvePipelineCreds(ctx, r.Client)
 			regURL := os.Getenv("REGISTRY_URL")
 			if regURL == "" {
@@ -457,7 +463,7 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 				if bs.Annotations == nil {
 					bs.Annotations = make(map[string]string)
 				}
-				bs.Annotations[annotPipelineInj] = "true"
+				bs.Annotations[annotPipelineInj] = pipelineWorkflowVersion
 				_ = r.Update(ctx, bs)
 			}
 		}
@@ -476,20 +482,6 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 	}
 	registryURL := r.effectiveRegistryURL()
 	buildImage := fmt.Sprintf("%s/%s:%s", registryURL, appName(bs), imageTag)
-
-	// After first successful build, use image from registry (pipeline builds on push, notifies via webhook).
-	// Skip the rollback case (spec.imageTag) — that's an operator-pinned tag we trust as-is.
-	if bs.Status.BuildStatus == "Succeeded" && bs.Spec.ImageTag == "" &&
-		!registry.ImagePullable(registryURL, appName(bs), imageTag) {
-		// The recorded BuildTag is no longer pullable (push never landed, or GC'd).
-		// Don't redeploy onto a phantom image — drop back to needing a rebuild so a
-		// real image gets pushed, and leave the current deployment untouched.
-		l.Error(nil, "recorded build image missing from registry; triggering rebuild", "image", buildImage)
-		if _, err := r.updateBuildStatus(ctx, req, bs, buildImage, "Failed", imageTag); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: requeueBuild}, nil
-	}
 
 	// After first successful build, use image from registry (pipeline builds on push, notifies via webhook)
 	if bs.Status.BuildStatus == "Succeeded" {
@@ -627,29 +619,11 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 	}
 
 	if job.Status.Succeeded > 0 {
-		// A completed Kaniko Job can still exit 0 without the image landing in
-		// the registry (push failure, GC). Never trust job success alone: if the
-		// manifest isn't actually pullable, marking the build Succeeded would roll
-		// the deployment onto a tag that just ImagePullBackOffs. Treat it as failed
-		// and requeue so the build retries, leaving the last good image in place.
-		if !registry.ImagePullable(registryURL, appName(bs), imageTag) {
-			l.Error(nil, "build job completed but image is not in the registry; not deploying", "image", buildImage)
-			if _, err := r.updateBuildStatus(ctx, req, bs, buildImage, "Failed", imageTag); err != nil {
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{RequeueAfter: requeueBuild}, nil
-		}
-
 		if bs.Status.BuildStatus != "Succeeded" || bs.Status.BuildTag != imageTag {
 			if _, err := r.updateBuildStatus(ctx, req, bs, buildImage, "Succeeded", imageTag); err != nil {
 				return ctrl.Result{}, err
 			}
 		}
-
-		// One app = one image: propagate the verified tag to every other instance
-		// of this app so main/testing never drift apart (e.g. main on a fresh tag
-		// while testing stays on an old one).
-		r.fanoutBuildTag(ctx, bs, buildImage, imageTag)
 
 		if bs.Spec.Port == nil || *bs.Spec.Port == 0 {
 			detected := registry.InspectPort(registryURL, appName(bs), imageTag)

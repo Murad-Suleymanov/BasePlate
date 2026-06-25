@@ -128,12 +128,17 @@ func EnsureWorkflow(token, owner, repo, registryURL, imageName, webhookURL, serv
 	defer resp.Body.Close()
 
 	body := struct {
-		SHA  string `json:"sha"`
-		SHA256 string `json:"sha256,omitempty"`
+		SHA     string `json:"sha"`
+		Content string `json:"content"`
 	}{}
 	hasExisting := resp.StatusCode == 200
 	if hasExisting {
 		_ = json.NewDecoder(resp.Body).Decode(&body)
+		// Already in sync — skip the PUT so we don't spam no-op commits when the
+		// caller re-runs injection (e.g. after a workflow-template version bump).
+		if existing, derr := base64.StdEncoding.DecodeString(strings.ReplaceAll(body.Content, "\n", "")); derr == nil && string(existing) == content {
+			return nil
+		}
 	}
 
 	// PUT to create or update
