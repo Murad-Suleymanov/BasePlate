@@ -40,6 +40,9 @@ const (
 	kanikoImage            = "gcr.io/kaniko-project/executor:latest"
 	registryPushSecretName = "registry-push"
 	labelBuildTag          = "deploy.easydeploy.io/build-tag"
+	// labelApp groups every instance of one app (same source repo) under a shared
+	// value so the build-complete webhook can fan a new image out to all instances.
+	labelApp = "deploy.easydeploy.io/app"
 	labelPurpose           = "deploy.easydeploy.io/purpose"
 	annotRebuild           = "deploy.easydeploy.io/rebuild"
 	annotPipelineInj       = "deploy.easydeploy.io/pipeline-injected"
@@ -119,7 +122,7 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 	// When canary is active, stable deployment must stay on the locked StableTag,
 	// not on the latest build image that the pipeline just pushed.
 	if bs.Spec.Canary != nil && bs.Spec.Canary.Enabled && bs.Status.StableTag != "" {
-		image = fmt.Sprintf("%s/%s:%s", r.effectiveRegistryURL(), bs.Name, bs.Status.StableTag)
+		image = fmt.Sprintf("%s/%s:%s", r.effectiveRegistryURL(), appName(bs), bs.Status.StableTag)
 	}
 
 	depName := fmt.Sprintf("%s-deploy", bs.Name)
@@ -173,6 +176,9 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 
 		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, &dep, func() error {
 			dep.ObjectMeta.Labels = mergeStringMap(dep.ObjectMeta.Labels, labels)
+				// App-grouping label for build-complete webhook fan-out (metadata only,
+				// kept off the immutable selector).
+				dep.ObjectMeta.Labels[labelApp] = appName(bs)
 
 			// When HPA is in charge, we don't set replicas — HPA owns it.
 			if replicas != nil {
@@ -424,7 +430,12 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 
 	// Always inject pipeline for GitHub repos — workflow builds & pushes to registry, then notifies deploy
 	if owner, repo, ok := injector.ParseGitHubRepo(bs.Spec.Repo); ok {
-		if bs.Annotations == nil || bs.Annotations[annotPipelineInj] == "" {
+		// Only the primary instance injects the workflow: every instance of an app
+		// shares one repo, so they would otherwise clobber each other's workflow.
+		// The workflow builds one image (the repo name) and the build-complete
+		// webhook fans it out to all instances. Single-instance apps are always
+		// their own primary, so this also covers the non-pool case.
+		if routeIsPrimary(bs) && (bs.Annotations == nil || bs.Annotations[annotPipelineInj] == "") {
 			creds := credentials.ResolvePipelineCreds(ctx, r.Client)
 			regURL := os.Getenv("REGISTRY_URL")
 			if regURL == "" {
@@ -437,7 +448,7 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 			env := os.Getenv("ENVIRONMENT")
 			if env == "" {
 				l.Error(fmt.Errorf("ENVIRONMENT env var is not set"), "cannot inject pipeline without ENVIRONMENT")
-			} else if err := injector.EnsureWorkflow(creds.GitHubToken, owner, repo, regURL, bs.Name, webhookURL, bs.Name, bs.Namespace, env); err != nil {
+			} else if err := injector.EnsureWorkflow(creds.GitHubToken, owner, repo, regURL, repo, webhookURL, repo, bs.Namespace, env); err != nil {
 				l.Error(err, "pipeline injection failed", "repo", bs.Spec.Repo)
 			} else if err := injector.EnsureRepoSecrets(creds.GitHubToken, owner, repo, creds.RegistryUsername, creds.RegistryPassword); err != nil {
 				l.Error(err, "repo secrets failed", "repo", bs.Spec.Repo)
@@ -464,12 +475,12 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 		imageTag = bs.Status.BuildTag
 	}
 	registryURL := r.effectiveRegistryURL()
-	buildImage := fmt.Sprintf("%s/%s:%s", registryURL, bs.Name, imageTag)
+	buildImage := fmt.Sprintf("%s/%s:%s", registryURL, appName(bs), imageTag)
 
 	// After first successful build, use image from registry (pipeline builds on push, notifies via webhook)
 	if bs.Status.BuildStatus == "Succeeded" {
 		if bs.Spec.Port == nil || *bs.Spec.Port == 0 {
-			detected := registry.InspectPort(registryURL, bs.Name, imageTag)
+			detected := registry.InspectPort(registryURL, appName(bs), imageTag)
 			if detected == 0 {
 				owner, repo, ok := injector.ParseGitHubRepo(bs.Spec.Repo)
 				if ok {
@@ -502,7 +513,7 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 		}
 	}
 
-	jobName := fmt.Sprintf("%s-build-%s", bs.Name, sanitizeK8sName(imageTag))
+	jobName := fmt.Sprintf("%s-build-%s", appName(bs), sanitizeK8sName(imageTag))
 	var job batchv1.Job
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: bs.Namespace}, &job)
 
@@ -609,7 +620,7 @@ func (r *BirServiceReconciler) reconcileBuild(ctx context.Context, req ctrl.Requ
 		}
 
 		if bs.Spec.Port == nil || *bs.Spec.Port == 0 {
-			detected := registry.InspectPort(registryURL, bs.Name, imageTag)
+			detected := registry.InspectPort(registryURL, appName(bs), imageTag)
 			if detected == 0 {
 				owner, repo, ok := injector.ParseGitHubRepo(bs.Spec.Repo)
 				if ok {
@@ -1089,6 +1100,18 @@ func routeIsPrimary(bs *deployv1alpha1.BirService) bool {
 // poolServiceName is the Service that fronts a pool: <group>-svc.
 func poolServiceName(bs *deployv1alpha1.BirService) string {
 	return fmt.Sprintf("%s-svc", routeGroup(bs))
+}
+
+// appName is the app/repo identity shared by every instance of a tenant. All
+// instances of one app build and pull ONE image (registry/<appName>:<tag>); the
+// build-complete webhook fans a new tag out to each instance's deployment. For a
+// repo-built app it is the GitHub repo name (so main + testing share it); with no
+// repo it falls back to the BirService name (single-instance, image-based apps).
+func appName(bs *deployv1alpha1.BirService) string {
+	if _, repo, ok := injector.ParseGitHubRepo(bs.Spec.Repo); ok {
+		return repo
+	}
+	return bs.Name
 }
 
 func resolveHPAConfig(bs *deployv1alpha1.BirService) (*int32, *int32, bool) {

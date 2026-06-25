@@ -17,9 +17,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	deployv1alpha1 "easy-deploy/api/v1alpha1"
+	"easy-deploy/internal/injector"
 )
 
 const annotRebuild = "deploy.easydeploy.io/rebuild"
+
+// labelApp groups all instances of one app — the controller stamps it on every
+// deployment so a single build-complete notification rolls every instance.
+const labelApp = "deploy.easydeploy.io/app"
 
 type GitHubHandler struct {
 	Client client.Client
@@ -146,37 +151,55 @@ func (h *BuildCompleteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		payload.Tag = "latest"
 	}
 
-	depName := payload.Service + "-deploy"
 	registryURL := strings.TrimSpace(os.Getenv("REGISTRY_URL"))
 	if registryURL == "" {
 		registryURL = defaultRegistryURL
 	}
 	registryURL = strings.TrimSuffix(registryURL, "/")
 	image := registryURL + "/" + payload.Service + ":" + payload.Tag
-	l.Info("build complete, deploying", "deployment", depName, "namespace", payload.Namespace, "image", image)
+	l.Info("build complete, fanning out", "app", payload.Service, "namespace", payload.Namespace, "image", image)
 
-	// Update the BirService status first — the controller will reconcile and create
-	// the deployment. This still works on the first build before any deployment exists.
-	bs := &deployv1alpha1.BirService{}
-	if err := h.Client.Get(ctx, types.NamespacedName{Name: payload.Service, Namespace: payload.Namespace}, bs); err == nil {
-		bs.Status.BuildTag = payload.Tag
-		bs.Status.BuildStatus = "Succeeded"
-		bs.Status.BuildImage = image
-		_ = h.Client.Status().Update(ctx, bs)
+	// payload.Service is the app/repo name shared by every instance. Update the
+	// BuildTag on each BirService of this app so the controller keeps the new image
+	// on the next reconcile (otherwise it would revert the direct patch below).
+	var bsList deployv1alpha1.BirServiceList
+	if err := h.Client.List(ctx, &bsList, client.InNamespace(payload.Namespace)); err == nil {
+		for i := range bsList.Items {
+			b := &bsList.Items[i]
+			if _, repo, ok := injector.ParseGitHubRepo(b.Spec.Repo); !ok || repo != payload.Service {
+				continue
+			}
+			b.Status.BuildTag = payload.Tag
+			b.Status.BuildStatus = "Succeeded"
+			b.Status.BuildImage = image
+			if err := h.Client.Status().Update(ctx, b); err != nil {
+				l.Error(err, "failed to update BirService build status", "birservice", b.Name)
+			}
+		}
+	} else {
+		l.Error(err, "failed to list BirServices", "namespace", payload.Namespace)
 	}
 
-	// If a deployment already exists, patch it directly for a faster rollout.
+	// Patch every instance's deployment directly so all of them roll to the new
+	// image at once (an image change triggers a rolling restart).
 	jsonPatch := []byte(`[{"op":"replace","path":"/spec/template/spec/containers/0/image","value":"` + image + `"}]`)
-	dep := &appsv1.Deployment{}
-	dep.Name = depName
-	dep.Namespace = payload.Namespace
-	err = h.Client.Patch(ctx, dep, client.RawPatch(types.JSONPatchType, jsonPatch))
-	if err != nil && !apierrors.IsNotFound(err) {
-		l.Error(err, "failed to patch deployment", "deployment", depName)
+	patched := 0
+	var deps appsv1.DeploymentList
+	if err := h.Client.List(ctx, &deps, client.InNamespace(payload.Namespace), client.MatchingLabels{labelApp: payload.Service}); err == nil {
+		for i := range deps.Items {
+			d := &deps.Items[i]
+			if err := h.Client.Patch(ctx, d, client.RawPatch(types.JSONPatchType, jsonPatch)); err != nil && !apierrors.IsNotFound(err) {
+				l.Error(err, "failed to patch deployment", "deployment", d.Name)
+			} else if err == nil {
+				patched++
+			}
+		}
+	} else {
+		l.Error(err, "failed to list deployments", "namespace", payload.Namespace)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"ok":true,"deployment":"%s","tag":"%s"}`+"\n", depName, payload.Tag)
+	fmt.Fprintf(w, `{"ok":true,"app":"%s","instances":%d,"tag":"%s"}`+"\n", payload.Service, patched, payload.Tag)
 }
 
 func StartServer(ctx context.Context, addr string, handler *GitHubHandler, buildComplete *BuildCompleteHandler) error {
