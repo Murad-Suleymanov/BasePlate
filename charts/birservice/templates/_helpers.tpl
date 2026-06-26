@@ -76,6 +76,10 @@ resources:
 {{- end }}
 {{- end }}
 {{- end }}
+{{- $pool := $v.pool | default $v.nodePool | default "" | toString | trim }}
+{{- if $pool }}
+nodePool: {{ $pool | quote }}
+{{- end }}
 {{- if $v.port }}
 port: {{ $v.port }}
 {{- end }}
@@ -144,7 +148,7 @@ Uses a dict for state because Go template `range` creates a new variable scope â
 direct `$var = ...` assignments inside `range` don't reliably persist outside.
 */}}
 {{- define "birservice.isMultiInstance" -}}
-{{- $knownKeys := list "name" "owner" "image" "repo" "tag" "imageTag" "dockerfile" "port" "containerPort" "replicas" "hpa" "resources" "hostname" "hostnames" "expose" "metrics" "traffic" "readinessProbe" "livenessProbe" "singleton" "maxDown" "shutdown" "canary" "injectPipeline" "route" "routes" "environment" -}}
+{{- $knownKeys := list "name" "owner" "image" "repo" "tag" "imageTag" "dockerfile" "port" "containerPort" "replicas" "hpa" "resources" "pool" "nodePool" "hostname" "hostnames" "expose" "metrics" "traffic" "readinessProbe" "livenessProbe" "singleton" "maxDown" "shutdown" "canary" "injectPipeline" "route" "routes" "environment" -}}
 {{- $state := dict "hasInstance" false -}}
 {{- range $k, $val := . -}}
   {{- /* `_`-prefixed keys are YAML anchor bases (e.g. _common: &common), not instances. */ -}}

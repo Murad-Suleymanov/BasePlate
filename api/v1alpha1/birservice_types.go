@@ -65,6 +65,12 @@ type BirServiceSpec struct {
 	// Defaults when omitted: requests(cpu=75m,memory=200Mi), limits are 2x requests.
 	Resources *ResourceConfigSpec `json:"resources,omitempty"`
 
+	// NodePool pins this workload to a named node pool. The operator resolves it
+	// to a Pool resource and injects the pool's nodeSelector + matching tolerations.
+	// Empty schedules onto the default (untainted) nodes. An unknown name blocks the
+	// deploy rather than silently falling back to default.
+	NodePool string `json:"nodePool,omitempty"`
+
 	// Traffic configures service-mesh traffic policies. If non-nil, the operator treats the
 	// workload as mesh-enabled (default provider: Istio): namespace istio-injection label, and
 	// optional Envoy local rate limit. Omit entirely if the app should not use the mesh.

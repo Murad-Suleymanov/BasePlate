@@ -1,0 +1,22 @@
+{{- /* Baseline node pools, declared in platform values so adding a pool is a
+       values edit — no chart or ApplicationSet change. Node labelling/tainting
+       is done at the cluster (node join) level; this just registers the pool so
+       the operator can resolve spec.nodePool → nodeSelector + tolerations. */ -}}
+{{- range $name, $pool := .Values.pools }}
+{{- if $pool.enabled | default true }}
+---
+apiVersion: deploy.easydeploy.io/v1alpha1
+kind: Pool
+metadata:
+  name: {{ $name | quote }}
+spec:
+{{- with $pool.nodeSelector }}
+  nodeSelector:
+{{ toYaml . | indent 4 }}
+{{- end }}
+{{- with $pool.taints }}
+  taints:
+{{ toYaml . | indent 4 }}
+{{- end }}
+{{- end }}
+{{- end }}

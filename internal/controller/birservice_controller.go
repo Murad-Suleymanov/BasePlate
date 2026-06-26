@@ -159,6 +159,15 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
+	// Resolve the node pool before touching the Deployment. An unknown pool blocks
+	// the deploy (surfaced in status) rather than silently scheduling on default nodes.
+	nodeSelector, tolerations, err := r.resolveNodePool(ctx, bs)
+	if err != nil {
+		log.FromContext(ctx).Error(err, "nodePool resolution failed", "nodePool", bs.Spec.NodePool)
+		_, _ = r.updateBuildStatus(ctx, req, bs, bs.Status.BuildImage, "NodePoolError: "+err.Error(), bs.Status.BuildTag)
+		return ctrl.Result{RequeueAfter: requeueBuild}, nil
+	}
+
 	port := int32(8080)
 	if bs.Spec.Port != nil && *bs.Spec.Port > 0 {
 		port = *bs.Spec.Port
@@ -320,6 +329,11 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 			}
 
 			templateSpec.Containers = []corev1.Container{container}
+
+			// Node pool: pin to the pool's nodes and tolerate its taints. Assigned
+			// (not appended) so clearing spec.nodePool reverts to default scheduling.
+			templateSpec.NodeSelector = nodeSelector
+			templateSpec.Tolerations = tolerations
 
 			return ctrl.SetControllerReference(bs, &dep, r.Scheme)
 		})
@@ -749,6 +763,42 @@ func (r *BirServiceReconciler) deleteOldBuildJobs(ctx context.Context, bs *deplo
 		}
 	}
 	return nil
+}
+
+// resolveNodePool turns bs.Spec.NodePool into the nodeSelector + tolerations to
+// inject onto the pod template. An empty nodePool returns nils (no constraints —
+// the pod schedules onto the default, untainted nodes). A named-but-missing pool
+// returns an error so the deploy is blocked instead of silently landing on the
+// default nodes.
+func (r *BirServiceReconciler) resolveNodePool(ctx context.Context, bs *deployv1alpha1.BirService) (map[string]string, []corev1.Toleration, error) {
+	if bs.Spec.NodePool == "" {
+		return nil, nil, nil
+	}
+	var pool deployv1alpha1.Pool
+	if err := r.Get(ctx, types.NamespacedName{Name: bs.Spec.NodePool}, &pool); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil, fmt.Errorf("nodePool %q not found (create a Pool resource or fix the name)", bs.Spec.NodePool)
+		}
+		return nil, nil, err
+	}
+
+	var nodeSelector map[string]string
+	if len(pool.Spec.NodeSelector) > 0 {
+		nodeSelector = make(map[string]string, len(pool.Spec.NodeSelector))
+		for k, v := range pool.Spec.NodeSelector {
+			nodeSelector[k] = v
+		}
+	}
+
+	var tolerations []corev1.Toleration
+	for _, t := range pool.Spec.Taints {
+		tol := corev1.Toleration{Key: t.Key, Value: t.Value, Effect: t.Effect, Operator: corev1.TolerationOpEqual}
+		if t.Value == "" {
+			tol.Operator = corev1.TolerationOpExists
+		}
+		tolerations = append(tolerations, tol)
+	}
+	return nodeSelector, tolerations, nil
 }
 
 func (r *BirServiceReconciler) updateStableTag(ctx context.Context, req ctrl.Request, bs *deployv1alpha1.BirService, tag string) error {

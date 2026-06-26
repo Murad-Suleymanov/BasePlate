@@ -3,6 +3,7 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -379,6 +380,85 @@ func (in *BirServiceList) DeepCopy() *BirServiceList {
 }
 
 func (in *BirServiceList) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+func (in *PoolSpec) DeepCopyInto(out *PoolSpec) {
+	*out = *in
+	if in.NodeSelector != nil {
+		in, out := &in.NodeSelector, &out.NodeSelector
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
+	if in.Taints != nil {
+		in, out := &in.Taints, &out.Taints
+		*out = make([]corev1.Taint, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+}
+
+func (in *PoolSpec) DeepCopy() *PoolSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(PoolSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *Pool) DeepCopyInto(out *Pool) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	in.Spec.DeepCopyInto(&out.Spec)
+}
+
+func (in *Pool) DeepCopy() *Pool {
+	if in == nil {
+		return nil
+	}
+	out := new(Pool)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *Pool) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+func (in *PoolList) DeepCopyInto(out *PoolList) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
+	if in.Items != nil {
+		in, out := &in.Items, &out.Items
+		*out = make([]Pool, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+}
+
+func (in *PoolList) DeepCopy() *PoolList {
+	if in == nil {
+		return nil
+	}
+	out := new(PoolList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *PoolList) DeepCopyObject() runtime.Object {
 	if c := in.DeepCopy(); c != nil {
 		return c
 	}

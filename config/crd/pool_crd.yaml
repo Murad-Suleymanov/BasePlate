@@ -1,0 +1,54 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: pools.deploy.easydeploy.io
+spec:
+  group: deploy.easydeploy.io
+  scope: Cluster
+  names:
+    plural: pools
+    singular: pool
+    kind: Pool
+    shortNames:
+      - pool
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: NodeSelector
+          type: string
+          jsonPath: .spec.nodeSelector
+        - name: Taints
+          type: integer
+          jsonPath: .spec.taints[*].key
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              properties:
+                nodeSelector:
+                  type: object
+                  additionalProperties:
+                    type: string
+                taints:
+                  type: array
+                  items:
+                    type: object
+                    required: ["key", "effect"]
+                    properties:
+                      key:
+                        type: string
+                      value:
+                        type: string
+                      effect:
+                        type: string
+                        enum: ["NoSchedule", "PreferNoSchedule", "NoExecute"]

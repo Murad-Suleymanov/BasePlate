@@ -23,6 +23,8 @@
         "replicas":       { "$ref": "#/properties/replicas" },
         "hpa":            { "$ref": "#/properties/hpa" },
         "resources":      { "$ref": "#/properties/resources" },
+        "pool":           { "$ref": "#/properties/pool" },
+        "nodePool":       { "$ref": "#/properties/pool" },
         "hostname":       { "$ref": "#/properties/hostname" },
         "hostnames":      { "$ref": "#/properties/hostnames" },
         "expose":         { "$ref": "#/properties/expose" },
@@ -112,6 +114,12 @@
       "minimum": 0,
       "description": "Fixed pod count. Default 1 if HPA is not set. Ignored if hpa.minReplicas/maxReplicas are set."
     },
+    "pool": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Node pool to schedule on. Must match a Pool resource (e.g. 'system'). Omit for the default (untainted) nodes. An unknown name blocks the deploy. Alias: nodePool."
+    },
+    "nodePool": { "$ref": "#/properties/pool" },
     "hpa": {
       "type": "object",
       "additionalProperties": false,
