@@ -9,6 +9,7 @@ apiVersion: deploy.easydeploy.io/v1alpha1
 kind: Pool
 metadata:
   name: {{ $name | quote }}
+{{- if or $pool.nodeSelector $pool.taints }}
 spec:
 {{- with $pool.nodeSelector }}
   nodeSelector:
@@ -17,6 +18,11 @@ spec:
 {{- with $pool.taints }}
   taints:
 {{ toYaml . | indent 4 }}
+{{- end }}
+{{- else }}
+# No nodeSelector/taints (e.g. the default pool): emit an empty object, never
+# `spec: null` — the CRD's spec is a non-nullable object and apiserver rejects null.
+spec: {}
 {{- end }}
 {{- end }}
 {{- end }}
