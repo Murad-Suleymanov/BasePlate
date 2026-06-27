@@ -248,6 +248,13 @@ type HPASpec struct {
 	// configs; if scaleType is already set, TargetRPS is ignored. Like the rps
 	// signal it requires spec.traffic. Ignored when spec.replicas is set.
 	TargetRPS *int32 `json:"targetRPS,omitempty"`
+
+	// Window is the rate-averaging window for the rps signal (e.g. 1m, 2m, 5m).
+	// A larger window smooths spikes (stabler, slower); a smaller one reacts
+	// faster (noisier). Any valid Prometheus duration is accepted — the operator
+	// creates the backing recording rule on demand and reuses it across services.
+	// Empty defaults to 1m. Ignored for cpu/memory/worker (no rate window).
+	Window string `json:"window,omitempty"`
 }
 
 type ResourceConfigSpec struct {

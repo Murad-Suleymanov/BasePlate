@@ -38,6 +38,10 @@ spec:
             - {{ . | quote }}
 {{- end }}
           env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
 {{- if .Values.operator.env.environment.enabled }}
             - name: ENVIRONMENT
               value: {{ .Values.operator.env.environment.value | quote }}

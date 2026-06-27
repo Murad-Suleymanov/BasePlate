@@ -149,6 +149,11 @@
           "type": "integer",
           "minimum": 1,
           "description": "Per-pod target for scaleType. cpu/memory/worker: utilization % (defaults to 80). rps: requests/sec per pod (integer, required)."
+        },
+        "window": {
+          "type": "string",
+          "pattern": "^([0-9]+(ms|s|m|h|d|w|y))+$",
+          "description": "Rate-averaging window for scaleType: rps (e.g. 1m, 2m, 5m). Larger = smoother/slower, smaller = faster/noisier. Any valid Prometheus duration; the operator creates the backing recording rule on demand. Default 1m. Ignored for cpu/memory/worker."
         }
       }
     },

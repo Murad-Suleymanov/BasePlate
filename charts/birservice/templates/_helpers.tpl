@@ -47,6 +47,10 @@ hpa:
   target: {{ $target }}
 {{- end }}
 {{- end }}
+{{- $window := (get $hpa "window") | default "" | toString | trim }}
+{{- if $window }}
+  window: {{ $window | quote }}
+{{- end }}
 {{- end }}
 {{- $resources := $v.resources | default dict }}
 {{- $requests := (get $resources "requests") | default dict }}

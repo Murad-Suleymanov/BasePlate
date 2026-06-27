@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -165,6 +166,15 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 	if err != nil {
 		log.FromContext(ctx).Error(err, "nodePool resolution failed", "nodePool", bs.Spec.NodePool)
 		_, _ = r.updateBuildStatus(ctx, req, bs, bs.Status.BuildImage, "NodePoolError: "+err.Error(), bs.Status.BuildTag)
+		return ctrl.Result{RequeueAfter: requeueBuild}, nil
+	}
+
+	// A malformed rps window would produce a bogus recording rule / a metric
+	// selector that never matches. Block the deploy with a clear status instead.
+	if bs.Spec.HPA != nil && strings.TrimSpace(bs.Spec.HPA.Window) != "" && !validPromDuration(bs.Spec.HPA.Window) {
+		msg := fmt.Sprintf("HPAWindowError: invalid hpa.window %q (use a Prometheus duration like 1m, 2m, 5m)", bs.Spec.HPA.Window)
+		log.FromContext(ctx).Info(msg, "name", bs.Name)
+		_, _ = r.updateBuildStatus(ctx, req, bs, bs.Status.BuildImage, msg, bs.Status.BuildTag)
 		return ctrl.Result{RequeueAfter: requeueBuild}, nil
 	}
 
@@ -1257,6 +1267,13 @@ func (r *BirServiceReconciler) reconcileHPA(ctx context.Context, bs *deployv1alp
 
 	warnMissingHPAPrereqs(ctx, bs)
 
+	// Keep the shared rps-window recording rules in sync with what services request
+	// (adds new windows, prunes unused ones). Best-effort — a failure here must not
+	// block HPA creation; Prometheus loads the rule asynchronously anyway.
+	if err := r.reconcileRPSWindows(ctx); err != nil {
+		log.FromContext(ctx).Error(err, "failed to reconcile rps window recording rules")
+	}
+
 	metrics := hpaMetrics(bs, depName)
 
 	hpa := &autoscalingv2.HorizontalPodAutoscaler{}
@@ -1339,7 +1356,7 @@ func hpaMetrics(bs *deployv1alpha1.BirService, depName string) []autoscalingv2.M
 			return []autoscalingv2.MetricSpec{resourceUtilizationMetric(corev1.ResourceMemory, orDefault(target, defaultUtilization))}
 		case "rps":
 			if target > 0 {
-				return []autoscalingv2.MetricSpec{rpsExternalMetric(depName, target)}
+				return []autoscalingv2.MetricSpec{rpsExternalMetric(depName, target, hpaWindowOrDefault(bs))}
 			}
 		case "worker", "workers":
 			// app_worker_utilization is a percentage; reuse the cpu/memory default.
@@ -1349,7 +1366,7 @@ func hpaMetrics(bs *deployv1alpha1.BirService, depName string) []autoscalingv2.M
 		// Backward compatibility: the legacy targetRPS knob is an rps signal,
 		// used only when scaleType didn't already select one.
 		if bs.Spec.HPA.TargetRPS != nil && *bs.Spec.HPA.TargetRPS > 0 {
-			return []autoscalingv2.MetricSpec{rpsExternalMetric(depName, *bs.Spec.HPA.TargetRPS)}
+			return []autoscalingv2.MetricSpec{rpsExternalMetric(depName, *bs.Spec.HPA.TargetRPS, hpaWindowOrDefault(bs))}
 		}
 	}
 
@@ -1386,7 +1403,7 @@ func resourceUtilizationMetric(name corev1.ResourceName, targetPercent int32) au
 // workload's series while the namespace label is injected by the adapter from the
 // HPA's namespace (resource override), so two same-named workloads in different
 // namespaces don't cross-count. AverageValue divides total mesh RPS by the target.
-func rpsExternalMetric(depName string, targetRPS int32) autoscalingv2.MetricSpec {
+func rpsExternalMetric(depName string, targetRPS int32, window string) autoscalingv2.MetricSpec {
 	return autoscalingv2.MetricSpec{
 		Type: autoscalingv2.ExternalMetricSourceType,
 		External: &autoscalingv2.ExternalMetricSource{
@@ -1395,6 +1412,9 @@ func rpsExternalMetric(depName string, targetRPS int32) autoscalingv2.MetricSpec
 				Selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
 						"destination_workload": depName,
+						// window selects the matching pre-computed rate series; the
+						// operator ensures a recording rule exists for this window.
+						"window": window,
 					},
 				},
 			},
@@ -1404,6 +1424,126 @@ func rpsExternalMetric(depName string, targetRPS int32) autoscalingv2.MetricSpec
 			},
 		},
 	}
+}
+
+const (
+	// defaultRPSWindow is the rate-averaging window used when spec.hpa.window is
+	// empty. The operator always keeps a recording rule for this window so the
+	// default rps metric always has a backing series.
+	defaultRPSWindow = "1m"
+	// rpsWindowsRuleName is the single, operator-managed PrometheusRule that holds
+	// one recording rule per distinct window in use across all BirServices.
+	rpsWindowsRuleName = "easy-deploy-rps-windows"
+	// rpsWindowedMetric is the recording-rule output the rps external metric reads.
+	rpsWindowedMetric = "istio_requests:rate_windowed"
+)
+
+var prometheusRuleGVK = schema.GroupVersionKind{
+	Group:   "monitoring.coreos.com",
+	Version: "v1",
+	Kind:    "PrometheusRule",
+}
+
+// promDurationRe matches a Prometheus range duration (e.g. 30s, 1m, 2m30s, 1h).
+var promDurationRe = regexp.MustCompile(`^([0-9]+(ms|s|m|h|d|w|y))+$`)
+
+func validPromDuration(s string) bool {
+	return promDurationRe.MatchString(strings.TrimSpace(s))
+}
+
+// hpaWindowOrDefault returns the rps rate window for a BirService, defaulting to 1m.
+func hpaWindowOrDefault(bs *deployv1alpha1.BirService) string {
+	if bs.Spec.HPA != nil {
+		if w := strings.TrimSpace(bs.Spec.HPA.Window); w != "" {
+			return w
+		}
+	}
+	return defaultRPSWindow
+}
+
+// hpaUsesRPS reports whether the BirService scales on the rps signal (explicit
+// scaleType: rps, or the legacy targetRPS knob with no other scaleType).
+func hpaUsesRPS(bs *deployv1alpha1.BirService) bool {
+	if bs.Spec.HPA == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(bs.Spec.HPA.ScaleType)) {
+	case "rps":
+		return true
+	case "":
+		return bs.Spec.HPA.TargetRPS != nil && *bs.Spec.HPA.TargetRPS > 0
+	}
+	return false
+}
+
+func (r *BirServiceReconciler) operatorNamespace() string {
+	if ns := strings.TrimSpace(os.Getenv("POD_NAMESPACE")); ns != "" {
+		return ns
+	}
+	return "easy-deploy-system"
+}
+
+// reconcileRPSWindows keeps a single PrometheusRule in sync with the set of rate
+// windows requested across all BirServices. Each distinct window becomes one
+// recording rule that pre-computes istio rps and tags it with a `window` label,
+// so a per-service HPA can select its window via the metric selector. Services
+// sharing a window share one rule (reuse); a new window adds a rule (create);
+// CreateOrUpdate is a no-op when the window set is unchanged.
+func (r *BirServiceReconciler) reconcileRPSWindows(ctx context.Context) error {
+	var list deployv1alpha1.BirServiceList
+	if err := r.List(ctx, &list); err != nil {
+		return err
+	}
+
+	windowSet := map[string]bool{defaultRPSWindow: true}
+	for i := range list.Items {
+		bs := &list.Items[i]
+		if !bs.DeletionTimestamp.IsZero() || !hpaUsesRPS(bs) {
+			continue
+		}
+		if w := hpaWindowOrDefault(bs); validPromDuration(w) {
+			windowSet[w] = true
+		}
+	}
+
+	windows := make([]string, 0, len(windowSet))
+	for w := range windowSet {
+		windows = append(windows, w)
+	}
+	sort.Strings(windows)
+
+	rules := make([]interface{}, 0, len(windows))
+	for _, w := range windows {
+		rules = append(rules, map[string]interface{}{
+			"record": rpsWindowedMetric,
+			"expr": fmt.Sprintf(
+				`sum(rate(istio_requests_total{destination_workload!="",destination_workload_namespace!=""}[%s])) by (destination_workload, destination_workload_namespace)`, w),
+			"labels": map[string]interface{}{"window": w},
+		})
+	}
+
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		pr := &unstructured.Unstructured{}
+		pr.SetGroupVersionKind(prometheusRuleGVK)
+		pr.SetName(rpsWindowsRuleName)
+		pr.SetNamespace(r.operatorNamespace())
+
+		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, pr, func() error {
+			pr.Object["spec"] = map[string]interface{}{
+				"groups": []interface{}{
+					map[string]interface{}{
+						"name":  "easy-deploy-rps-windows",
+						"rules": rules,
+					},
+				},
+			}
+			pr.SetLabels(mergeStringMap(pr.GetLabels(), map[string]string{
+				"app.kubernetes.io/managed-by": "easy-deploy-operator",
+			}))
+			return nil
+		})
+		return err
+	})
 }
 
 // podsAverageMetric builds a Pods custom metric targeting an average per-pod value
