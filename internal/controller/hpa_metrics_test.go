@@ -47,11 +47,16 @@ func TestHPAMetricsRPSExternal(t *testing.T) {
 		t.Fatalf("expected a single External metric, got %+v", metrics)
 	}
 	ext := metrics[0].External
-	if ext == nil || ext.Metric.Name != "istio_requests_per_second" {
-		t.Fatalf("expected istio_requests_per_second external metric, got %+v", ext)
+	// Default window (1m) → the adapter serves istio_requests_per_second_1m.
+	if ext == nil || ext.Metric.Name != "istio_requests_per_second_1m" {
+		t.Fatalf("expected istio_requests_per_second_1m external metric, got %+v", ext)
 	}
 	if ext.Metric.Selector == nil || ext.Metric.Selector.MatchLabels["destination_workload"] != "app" {
 		t.Fatalf("expected destination_workload=app selector, got %+v", ext.Metric.Selector)
+	}
+	// The window is now encoded in the metric name, not a selector label.
+	if _, ok := ext.Metric.Selector.MatchLabels["window"]; ok {
+		t.Fatalf("did not expect a window selector label, got %+v", ext.Metric.Selector)
 	}
 	if ext.Target.Type != autoscalingv2.AverageValueMetricType ||
 		ext.Target.AverageValue == nil || ext.Target.AverageValue.Value() != 100 {
@@ -100,8 +105,15 @@ func TestHPAMetricsScaleTypeRPSAndWorker(t *testing.T) {
 
 	bs.Spec.HPA = &deployv1alpha1.HPASpec{MinReplicas: int32p(2), MaxReplicas: int32p(8), ScaleType: "rps", Target: 100}
 	if m := hpaMetrics(bs, "app"); len(m) != 1 || m[0].Type != autoscalingv2.ExternalMetricSourceType ||
-		m[0].External.Metric.Name != "istio_requests_per_second" || m[0].External.Target.AverageValue.Value() != 100 {
+		m[0].External.Metric.Name != "istio_requests_per_second_1m" || m[0].External.Target.AverageValue.Value() != 100 {
 		t.Fatalf("expected rps external 100, got %+v", m)
+	}
+
+	// A custom window is encoded in the metric name (no recording rule / selector label).
+	bs.Spec.HPA = &deployv1alpha1.HPASpec{MinReplicas: int32p(2), MaxReplicas: int32p(8), ScaleType: "rps", Target: 100, Window: "5m"}
+	if m := hpaMetrics(bs, "app"); len(m) != 1 || m[0].External == nil ||
+		m[0].External.Metric.Name != "istio_requests_per_second_5m" {
+		t.Fatalf("expected window-suffixed metric istio_requests_per_second_5m, got %+v", m)
 	}
 
 	// worker target is a utilization % (per-pod), served as a Pods metric.

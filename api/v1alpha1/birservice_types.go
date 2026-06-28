@@ -231,7 +231,8 @@ type HPASpec struct {
 	//   memory — average memory utilization across pods (Target is a % of the
 	//            memory request, default 80). Resource metric, metrics-server.
 	//   rps    — Istio requests-per-second per pod (Target is req/s). External
-	//            metric istio_requests_per_second; requires spec.traffic (waypoint).
+	//            metric istio_requests_per_second_<window> (the rate window from
+	//            spec.hpa.window, default 1m); requires spec.traffic (waypoint).
 	//   worker — worker-pool saturation per pod (Target is a utilization %). Pods
 	//            metric app_worker_utilization = 100*busy/max workers, normalized
 	//            across runtimes; requires spec.metrics (ServiceMonitor).

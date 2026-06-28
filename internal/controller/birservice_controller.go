@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -28,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	deployv1alpha1 "easy-deploy/api/v1alpha1"
 	"easy-deploy/internal/credentials"
@@ -43,17 +45,17 @@ const (
 	labelBuildTag          = "deploy.easydeploy.io/build-tag"
 	// labelApp groups every instance of one app (same source repo) under a shared
 	// value so the build-complete webhook can fan a new image out to all instances.
-	labelApp = "deploy.easydeploy.io/app"
-	labelPurpose           = "deploy.easydeploy.io/purpose"
-	annotRebuild           = "deploy.easydeploy.io/rebuild"
-	annotPipelineInj       = "deploy.easydeploy.io/pipeline-injected"
+	labelApp         = "deploy.easydeploy.io/app"
+	labelPurpose     = "deploy.easydeploy.io/purpose"
+	annotRebuild     = "deploy.easydeploy.io/rebuild"
+	annotPipelineInj = "deploy.easydeploy.io/pipeline-injected"
 	// pipelineWorkflowVersion is bumped whenever the injected workflow template or
 	// the values we feed it change in a way that needs to reach already-onboarded
 	// repos. The annotation stores the version last injected; a mismatch forces a
 	// re-injection so stale workflows (e.g. ones built with the instance name
 	// instead of the app/repo name) get overwritten with the correct content.
 	pipelineWorkflowVersion = "2"
-	requeueBuild           = 10 * time.Second
+	requeueBuild            = 10 * time.Second
 )
 
 type BirServiceReconciler struct {
@@ -201,9 +203,9 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 
 		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, &dep, func() error {
 			dep.ObjectMeta.Labels = mergeStringMap(dep.ObjectMeta.Labels, labels)
-				// App-grouping label for build-complete webhook fan-out (metadata only,
-				// kept off the immutable selector).
-				dep.ObjectMeta.Labels[labelApp] = appName(bs)
+			// App-grouping label for build-complete webhook fan-out (metadata only,
+			// kept off the immutable selector).
+			dep.ObjectMeta.Labels[labelApp] = appName(bs)
 
 			// When HPA is in charge, we don't set replicas — HPA owns it.
 			if replicas != nil {
@@ -853,6 +855,20 @@ func sanitizeK8sName(s string) string {
 
 func (r *BirServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	registerControllerMetrics()
+	// Ensure the operator-owned prometheus-adapter config exists at startup, even
+	// with zero BirServices — otherwise the adapter pod blocks on the missing
+	// ConfigMap volume (the chart mounts it via rules.existing).
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		if !mgr.GetCache().WaitForCacheSync(ctx) {
+			return fmt.Errorf("cache sync failed before adapter config bootstrap")
+		}
+		if err := r.reconcileAdapterConfig(ctx); err != nil {
+			log.FromContext(ctx).Error(err, "initial prometheus-adapter config bootstrap failed")
+		}
+		return nil
+	})); err != nil {
+		return err
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&deployv1alpha1.BirService{}).
 		Owns(&appsv1.Deployment{}).
@@ -1267,11 +1283,11 @@ func (r *BirServiceReconciler) reconcileHPA(ctx context.Context, bs *deployv1alp
 
 	warnMissingHPAPrereqs(ctx, bs)
 
-	// Keep the shared rps-window recording rules in sync with what services request
-	// (adds new windows, prunes unused ones). Best-effort — a failure here must not
-	// block HPA creation; Prometheus loads the rule asynchronously anyway.
-	if err := r.reconcileRPSWindows(ctx); err != nil {
-		log.FromContext(ctx).Error(err, "failed to reconcile rps window recording rules")
+	// Keep the operator-owned prometheus-adapter config in sync with the rps windows
+	// requested across all services (adds/prunes external rules, rolls the adapter on
+	// change). Best-effort — a failure here must not block HPA creation.
+	if err := r.reconcileAdapterConfig(ctx); err != nil {
+		log.FromContext(ctx).Error(err, "failed to reconcile prometheus-adapter config")
 	}
 
 	metrics := hpaMetrics(bs, depName)
@@ -1339,7 +1355,7 @@ const defaultUtilization int32 = 80
 //
 //	cpu    → Resource (CPU)    utilization %   — metrics-server
 //	memory → Resource (memory) utilization %   — metrics-server
-//	rps    → External istio_requests_per_second (AverageValue, req/s) — prometheus-adapter
+//	rps    → External istio_requests_per_second_<window> (AverageValue, req/s) — prometheus-adapter
 //	worker → Pods app_worker_utilization        (AverageValue, %)     — prometheus-adapter
 //
 // cpu/memory/worker are utilization percentages and default to 80% when target is
@@ -1397,9 +1413,11 @@ func resourceUtilizationMetric(name corev1.ResourceName, targetPercent int32) au
 	}
 }
 
-// rpsExternalMetric builds the External istio_requests_per_second metric for a
-// per-pod requests/sec target. The metric is served by prometheus-adapter from
-// the mesh's istio_requests_total counter; destination_workload picks this
+// rpsExternalMetric builds the External istio_requests_per_second_<window> metric
+// for a per-pod requests/sec target. prometheus-adapter serves a distinct external
+// metric per rate window (istio_requests_per_second_1m, _2m, …), each backed by an
+// operator-generated rule that computes sum(rate(istio_requests_total[window])) live
+// — no recording rule, no evaluation delay. destination_workload picks this
 // workload's series while the namespace label is injected by the adapter from the
 // HPA's namespace (resource override), so two same-named workloads in different
 // namespaces don't cross-count. AverageValue divides total mesh RPS by the target.
@@ -1408,13 +1426,10 @@ func rpsExternalMetric(depName string, targetRPS int32, window string) autoscali
 		Type: autoscalingv2.ExternalMetricSourceType,
 		External: &autoscalingv2.ExternalMetricSource{
 			Metric: autoscalingv2.MetricIdentifier{
-				Name: "istio_requests_per_second",
+				Name: rpsMetricNameForWindow(window),
 				Selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
 						"destination_workload": depName,
-						// window selects the matching pre-computed rate series; the
-						// operator ensures a recording rule exists for this window.
-						"window": window,
 					},
 				},
 			},
@@ -1428,20 +1443,37 @@ func rpsExternalMetric(depName string, targetRPS int32, window string) autoscali
 
 const (
 	// defaultRPSWindow is the rate-averaging window used when spec.hpa.window is
-	// empty. The operator always keeps a recording rule for this window so the
+	// empty. The operator always emits an adapter rule for this window so the
 	// default rps metric always has a backing series.
 	defaultRPSWindow = "1m"
-	// rpsWindowsRuleName is the single, operator-managed PrometheusRule that holds
-	// one recording rule per distinct window in use across all BirServices.
-	rpsWindowsRuleName = "easy-deploy-rps-windows"
-	// rpsWindowedMetric is the recording-rule output the rps external metric reads.
-	rpsWindowedMetric = "istio_requests:rate_windowed"
+	// adapterConfigMapName is the operator-owned ConfigMap holding the entire
+	// prometheus-adapter rules config (config.yaml). The adapter mounts it via the
+	// chart's rules.existing setting, so the operator — not Helm — owns the rules.
+	adapterConfigMapName = "easy-deploy-adapter-config"
+	// adapterConfigKey is the key the adapter reads (--config=/etc/adapter/config.yaml).
+	adapterConfigKey = "config.yaml"
+	// adapterDeploymentName is the prometheus-adapter Deployment the operator rolls
+	// when the config changes (the adapter reads its config only at startup).
+	adapterDeploymentName = "prometheus-adapter"
+	// adapterConfigChecksumAnnotation carries a hash of the rendered config on the
+	// adapter pod template; bumping it forces a rollout onto the new config. ArgoCD
+	// ignores this path (RespectIgnoreDifferences) so it doesn't fight the operator.
+	adapterConfigChecksumAnnotation = "easy-deploy.io/config-checksum"
 )
 
-var prometheusRuleGVK = schema.GroupVersionKind{
-	Group:   "monitoring.coreos.com",
-	Version: "v1",
-	Kind:    "PrometheusRule",
+// adapterNamespace is where prometheus-adapter and its config ConfigMap live.
+func adapterNamespace() string {
+	if ns := strings.TrimSpace(os.Getenv("ADAPTER_NAMESPACE")); ns != "" {
+		return ns
+	}
+	return "monitoring"
+}
+
+// rpsMetricNameForWindow returns the external metric name the adapter serves for a
+// rate window (e.g. 1m -> istio_requests_per_second_1m). A Prometheus duration's
+// chars ([0-9smhdwy]) are all valid in a metric name, so no sanitisation is needed.
+func rpsMetricNameForWindow(window string) string {
+	return "istio_requests_per_second_" + strings.TrimSpace(window)
 }
 
 // promDurationRe matches a Prometheus range duration (e.g. 30s, 1m, 2m30s, 1h).
@@ -1476,20 +1508,15 @@ func hpaUsesRPS(bs *deployv1alpha1.BirService) bool {
 	return false
 }
 
-func (r *BirServiceReconciler) operatorNamespace() string {
-	if ns := strings.TrimSpace(os.Getenv("POD_NAMESPACE")); ns != "" {
-		return ns
-	}
-	return "easy-deploy-system"
-}
-
-// reconcileRPSWindows keeps a single PrometheusRule in sync with the set of rate
-// windows requested across all BirServices. Each distinct window becomes one
-// recording rule that pre-computes istio rps and tags it with a `window` label,
-// so a per-service HPA can select its window via the metric selector. Services
-// sharing a window share one rule (reuse); a new window adds a rule (create);
-// CreateOrUpdate is a no-op when the window set is unchanged.
-func (r *BirServiceReconciler) reconcileRPSWindows(ctx context.Context) error {
+// reconcileAdapterConfig renders the entire prometheus-adapter rules config from the
+// set of rate windows requested across all BirServices and writes it to the
+// operator-owned ConfigMap (adapterConfigMapName, mounted via the chart's
+// rules.existing). Each distinct window becomes one external rule that computes istio
+// rps live — sum(rate(istio_requests_total[w])) — so there is no recording-rule
+// indirection or evaluation delay; the static worker custom rule is always included.
+// When the rendered config changes the adapter Deployment is rolled (it reads its
+// config only at startup). A new window adds a rule; an unused one is pruned.
+func (r *BirServiceReconciler) reconcileAdapterConfig(ctx context.Context) error {
 	var list deployv1alpha1.BirServiceList
 	if err := r.List(ctx, &list); err != nil {
 		return err
@@ -1512,37 +1539,82 @@ func (r *BirServiceReconciler) reconcileRPSWindows(ctx context.Context) error {
 	}
 	sort.Strings(windows)
 
-	rules := make([]interface{}, 0, len(windows))
-	for _, w := range windows {
-		rules = append(rules, map[string]interface{}{
-			"record": rpsWindowedMetric,
-			"expr": fmt.Sprintf(
-				`sum(rate(istio_requests_total{destination_workload!="",destination_workload_namespace!=""}[%s])) by (destination_workload, destination_workload_namespace)`, w),
-			"labels": map[string]interface{}{"window": w},
-		})
-	}
+	config := renderAdapterConfig(windows)
+	ns := adapterNamespace()
 
-	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		pr := &unstructured.Unstructured{}
-		pr.SetGroupVersionKind(prometheusRuleGVK)
-		pr.SetName(rpsWindowsRuleName)
-		pr.SetNamespace(r.operatorNamespace())
-
-		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, pr, func() error {
-			pr.Object["spec"] = map[string]interface{}{
-				"groups": []interface{}{
-					map[string]interface{}{
-						"name":  "easy-deploy-rps-windows",
-						"rules": rules,
-					},
-				},
-			}
-			pr.SetLabels(mergeStringMap(pr.GetLabels(), map[string]string{
+	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		cm := &corev1.ConfigMap{}
+		cm.Name = adapterConfigMapName
+		cm.Namespace = ns
+		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
+			cm.Labels = mergeStringMap(cm.Labels, map[string]string{
 				"app.kubernetes.io/managed-by": "easy-deploy-operator",
-			}))
+			})
+			if cm.Data == nil {
+				cm.Data = map[string]string{}
+			}
+			cm.Data[adapterConfigKey] = config
 			return nil
 		})
 		return err
+	}); err != nil {
+		return err
+	}
+
+	return r.rolloutAdapter(ctx, ns, config)
+}
+
+// renderAdapterConfig builds the prometheus-adapter config.yaml: the static worker
+// custom-metric rule plus one external rule per rate window. The format is the
+// adapter's own (rules = custom metrics, externalRules = external metrics), not the
+// Helm chart's values shape.
+func renderAdapterConfig(windows []string) string {
+	var b strings.Builder
+	b.WriteString(`rules:
+- seriesQuery: 'app_worker_utilization{namespace!="",pod!=""}'
+  resources:
+    overrides:
+      namespace: {resource: namespace}
+      pod: {resource: pod}
+  name:
+    matches: "^app_worker_utilization$"
+    as: "app_worker_utilization"
+  metricsQuery: 'avg(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+externalRules:
+`)
+	for _, w := range windows {
+		fmt.Fprintf(&b, `- seriesQuery: 'istio_requests_total{destination_workload!="",destination_workload_namespace!=""}'
+  resources:
+    overrides:
+      destination_workload_namespace: {resource: namespace}
+  name:
+    matches: "^istio_requests_total$"
+    as: "%s"
+  metricsQuery: 'sum(rate(istio_requests_total{<<.LabelMatchers>>}[%s])) by (destination_workload, destination_workload_namespace)'
+`, rpsMetricNameForWindow(w), w)
+	}
+	return b.String()
+}
+
+// rolloutAdapter bumps the config-checksum annotation on the prometheus-adapter
+// Deployment's pod template when the rendered config changes, forcing a rollout onto
+// the new config (the adapter does not hot-reload). A no-op when the checksum already
+// matches, so steady-state reconciles don't churn the adapter; a missing Deployment
+// (e.g. fresh cluster, adapter not yet synced) is ignored — the ConfigMap is enough.
+func (r *BirServiceReconciler) rolloutAdapter(ctx context.Context, ns, config string) error {
+	sum := fmt.Sprintf("%x", sha256.Sum256([]byte(config)))
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		dep := &appsv1.Deployment{}
+		if err := r.Get(ctx, types.NamespacedName{Name: adapterDeploymentName, Namespace: ns}, dep); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		if dep.Spec.Template.Annotations[adapterConfigChecksumAnnotation] == sum {
+			return nil
+		}
+		dep.Spec.Template.Annotations = mergeStringMap(dep.Spec.Template.Annotations, map[string]string{
+			adapterConfigChecksumAnnotation: sum,
+		})
+		return r.Update(ctx, dep)
 	})
 }
 

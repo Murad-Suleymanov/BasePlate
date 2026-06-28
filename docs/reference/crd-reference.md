@@ -84,7 +84,7 @@ defaults to **CPU at 80%**.
 |-------------|--------|----------------|--------------|
 | `cpu` | Resource, metrics-server | CPU utilization % of request (default 80) | — |
 | `memory` | Resource, metrics-server | memory utilization % of request (default 80) | — |
-| `rps` | External `istio_requests_per_second`, prometheus-adapter | requests/sec per pod (integer) | `spec.traffic` (waypoint L7 metrics) |
+| `rps` | External `istio_requests_per_second_<window>`, prometheus-adapter | requests/sec per pod (integer) | `spec.traffic` (waypoint L7 metrics) |
 | `worker` | Pods `app_worker_utilization`, prometheus-adapter | worker-pool saturation % = 100×busy/max (default 80) | `spec.metrics` + app exposes a worker exporter |
 
 `target` defaults to 80 for the percentage signals (`cpu`/`memory`/`worker`) and is
