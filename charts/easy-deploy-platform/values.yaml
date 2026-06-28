@@ -5,7 +5,7 @@ istio:
 
 operator:
   containerName: manager
-  image: ghcr.io/murad-suleymanov/easy-deploy-operator:203f91ccb3300c461ec9b24a2c2cc42e61eded7a
+  image: ghcr.io/murad-suleymanov/easy-deploy-operator:ed2a0e572ae4202c43e13412bc22ae1db3e362ae
   imagePullPolicy: Always
   replicas: 1
 
