@@ -64,6 +64,24 @@ func TestHPAMetricsRPSExternal(t *testing.T) {
 	}
 }
 
+// existingAdapterWindows must recover exactly the windows renderAdapterConfig wrote,
+// so the operator can seed (and thus never prune) windows already served.
+func TestAdapterWindowsRoundTrip(t *testing.T) {
+	cfg := renderAdapterConfig([]string{"1m", "5m", "10m", "2m30s"})
+	got := map[string]bool{}
+	for _, w := range existingAdapterWindows(cfg) {
+		got[w] = true
+	}
+	for _, w := range []string{"1m", "5m", "10m", "2m30s"} {
+		if !got[w] {
+			t.Fatalf("expected window %q to round-trip, got %v", w, got)
+		}
+	}
+	if len(got) != 4 {
+		t.Fatalf("expected 4 distinct windows, got %v", got)
+	}
+}
+
 func TestHPAMetricsScaleTypeMemory(t *testing.T) {
 	bs := &deployv1alpha1.BirService{}
 	bs.Namespace = "tenant-a"

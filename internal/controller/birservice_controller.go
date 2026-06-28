@@ -1483,6 +1483,25 @@ func validPromDuration(s string) bool {
 	return promDurationRe.MatchString(strings.TrimSpace(s))
 }
 
+// adapterWindowRe captures the rate window from a generated external metric name
+// (istio_requests_per_second_<window>) in an existing rendered adapter config.
+var adapterWindowRe = regexp.MustCompile(`istio_requests_per_second_([0-9a-z]+)`)
+
+// existingAdapterWindows returns the rate windows already present in a rendered
+// adapter config, so the operator can keep (never prune) windows it has served.
+func existingAdapterWindows(config string) []string {
+	if config == "" {
+		return nil
+	}
+	var out []string
+	for _, m := range adapterWindowRe.FindAllStringSubmatch(config, -1) {
+		if w := m[1]; validPromDuration(w) {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
 // hpaWindowOrDefault returns the rps rate window for a BirService, defaulting to 1m.
 func hpaWindowOrDefault(bs *deployv1alpha1.BirService) string {
 	if bs.Spec.HPA != nil {
@@ -1515,14 +1534,33 @@ func hpaUsesRPS(bs *deployv1alpha1.BirService) bool {
 // rps live — sum(rate(istio_requests_total[w])) — so there is no recording-rule
 // indirection or evaluation delay; the static worker custom rule is always included.
 // When the rendered config changes the adapter Deployment is rolled (it reads its
-// config only at startup). A new window adds a rule; an unused one is pruned.
+// config only at startup).
+//
+// Windows accumulate and are never pruned: the set is the union of windows already
+// present in the config with those currently requested. A window that no service
+// uses anymore (e.g. a service switched 5m -> 10m) keeps its rule, so steady-state
+// edits don't churn the adapter and any HPA still referencing the old metric name
+// keeps working. Only a genuinely new window adds a rule and triggers a rollout.
 func (r *BirServiceReconciler) reconcileAdapterConfig(ctx context.Context) error {
+	ns := adapterNamespace()
+
+	windowSet := map[string]bool{defaultRPSWindow: true}
+
+	// Seed with windows already written, so switching/removing a service's window
+	// never drops its rule.
+	existing := &corev1.ConfigMap{}
+	if err := r.Get(ctx, types.NamespacedName{Name: adapterConfigMapName, Namespace: ns}, existing); err == nil {
+		for _, w := range existingAdapterWindows(existing.Data[adapterConfigKey]) {
+			windowSet[w] = true
+		}
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+
 	var list deployv1alpha1.BirServiceList
 	if err := r.List(ctx, &list); err != nil {
 		return err
 	}
-
-	windowSet := map[string]bool{defaultRPSWindow: true}
 	for i := range list.Items {
 		bs := &list.Items[i]
 		if !bs.DeletionTimestamp.IsZero() || !hpaUsesRPS(bs) {
@@ -1540,7 +1578,6 @@ func (r *BirServiceReconciler) reconcileAdapterConfig(ctx context.Context) error
 	sort.Strings(windows)
 
 	config := renderAdapterConfig(windows)
-	ns := adapterNamespace()
 
 	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		cm := &corev1.ConfigMap{}
