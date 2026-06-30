@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -61,6 +62,7 @@ const (
 type BirServiceReconciler struct {
 	client.Client
 	Scheme      *runtime.Scheme
+	Recorder    record.EventRecorder
 	BaseDomain  string
 	TargetIP    string
 	RegistryURL string
@@ -162,13 +164,21 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
-	// Resolve the node pool before touching the Deployment. An unknown pool blocks
-	// the deploy (surfaced in status) rather than silently scheduling on default nodes.
-	nodeSelector, tolerations, err := r.resolveNodePool(ctx, bs)
+	// Resolve the node pool before touching the Deployment. A real API failure blocks
+	// and retries; an unknown pool does not block — it pins the pod to an
+	// unsatisfiable nodeSelector (so it stays Pending, a visible failure) and records
+	// a Warning event rather than silently scheduling on default nodes.
+	nodeSelector, tolerations, poolWarn, err := r.resolveNodePool(ctx, bs)
 	if err != nil {
 		log.FromContext(ctx).Error(err, "nodePool resolution failed", "nodePool", bs.Spec.NodePool)
 		_, _ = r.updateBuildStatus(ctx, req, bs, bs.Status.BuildImage, "NodePoolError: "+err.Error(), bs.Status.BuildTag)
 		return ctrl.Result{RequeueAfter: requeueBuild}, nil
+	}
+	if poolWarn != "" {
+		log.FromContext(ctx).Info(poolWarn, "nodePool", bs.Spec.NodePool)
+		if r.Recorder != nil {
+			r.Recorder.Event(bs, corev1.EventTypeWarning, "NodePoolMissing", poolWarn)
+		}
 	}
 
 	// A malformed rps window would produce a bogus recording rule / a metric
@@ -779,19 +789,26 @@ func (r *BirServiceReconciler) deleteOldBuildJobs(ctx context.Context, bs *deplo
 
 // resolveNodePool turns bs.Spec.NodePool into the nodeSelector + tolerations to
 // inject onto the pod template. An empty nodePool returns nils (no constraints —
-// the pod schedules onto the default, untainted nodes). A named-but-missing pool
-// returns an error so the deploy is blocked instead of silently landing on the
-// default nodes.
-func (r *BirServiceReconciler) resolveNodePool(ctx context.Context, bs *deployv1alpha1.BirService) (map[string]string, []corev1.Toleration, error) {
+// the pod schedules onto the default, untainted nodes).
+//
+// A named-but-missing pool does NOT block the deploy and does NOT silently land on
+// the default nodes: it returns a best-effort nodeSelector {nodePool: <name>} (the
+// platform's node-label convention) plus a warning. With no node carrying that label
+// the pod stays Pending — a visible failure — and it self-heals once the Pool
+// resource (and a matching node) appears, since the next reconcile takes the
+// resolved path. The string return is that warning (empty on a clean resolve); err is
+// reserved for real API failures (transient — the caller blocks and retries those).
+func (r *BirServiceReconciler) resolveNodePool(ctx context.Context, bs *deployv1alpha1.BirService) (map[string]string, []corev1.Toleration, string, error) {
 	if bs.Spec.NodePool == "" {
-		return nil, nil, nil
+		return nil, nil, "", nil
 	}
 	var pool deployv1alpha1.Pool
 	if err := r.Get(ctx, types.NamespacedName{Name: bs.Spec.NodePool}, &pool); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, nil, fmt.Errorf("nodePool %q not found (create a Pool resource or fix the name)", bs.Spec.NodePool)
+			warn := fmt.Sprintf("nodePool %q not found; pinned to nodePool=%s so pods stay Pending until a Pool resource and a matching node exist", bs.Spec.NodePool, bs.Spec.NodePool)
+			return map[string]string{"nodePool": bs.Spec.NodePool}, nil, warn, nil
 		}
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 
 	var nodeSelector map[string]string
@@ -810,7 +827,7 @@ func (r *BirServiceReconciler) resolveNodePool(ctx context.Context, bs *deployv1
 		}
 		tolerations = append(tolerations, tol)
 	}
-	return nodeSelector, tolerations, nil
+	return nodeSelector, tolerations, "", nil
 }
 
 func (r *BirServiceReconciler) updateStableTag(ctx context.Context, req ctrl.Request, bs *deployv1alpha1.BirService, tag string) error {

@@ -67,6 +67,7 @@ func main() {
 	if err := (&controller.BirServiceReconciler{
 		Client:      mgr.GetClient(),
 		Scheme:      mgr.GetScheme(),
+		Recorder:    mgr.GetEventRecorderFor("birservice-controller"),
 		BaseDomain:  baseDomain,
 		TargetIP:    targetIP,
 		RegistryURL: registryURL,

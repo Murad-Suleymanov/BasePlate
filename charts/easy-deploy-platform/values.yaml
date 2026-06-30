@@ -130,6 +130,13 @@ rbac:
         apiGroups: ["batch"]
         resources: ["jobs"]
         verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      # Warning events on a BirService (e.g. a missing nodePool) so the cause is
+      # discoverable via `kubectl describe` / ArgoCD, not just a Pending pod.
+      events:
+        enabled: true
+        apiGroups: [""]
+        resources: ["events"]
+        verbs: ["create", "patch"]
       httproutes:
         enabled: true
         apiGroups: ["gateway.networking.k8s.io"]
