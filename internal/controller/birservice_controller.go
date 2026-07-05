@@ -50,6 +50,13 @@ const (
 	labelPurpose     = "deploy.easydeploy.io/purpose"
 	annotRebuild     = "deploy.easydeploy.io/rebuild"
 	annotPipelineInj = "deploy.easydeploy.io/pipeline-injected"
+	// annotHealthyTag / annotRolledBackTag drive operator auto-rollback. They live on
+	// the Deployment (operator-owned, not in git, so ArgoCD never fights them):
+	// healthy-tag is the last image tag whose rollout became fully available;
+	// rolled-back-tag is a tag quarantined after its pods crash-looped, so the
+	// operator keeps serving healthy-tag until a new build tag arrives.
+	annotHealthyTag    = "deploy.easydeploy.io/healthy-tag"
+	annotRolledBackTag = "deploy.easydeploy.io/rolled-back-tag"
 	// pipelineWorkflowVersion is bumped whenever the injected workflow template or
 	// the values we feed it change in a way that needs to reach already-onboarded
 	// repos. The annotation stores the version last injected; a mismatch forces a
@@ -57,6 +64,9 @@ const (
 	// instead of the app/repo name) get overwritten with the correct content.
 	pipelineWorkflowVersion = "2"
 	requeueBuild            = 10 * time.Second
+	// requeueRollout re-checks an in-progress rollout so a crash-looping new version
+	// is caught (and rolled back) within ~30-60s without waiting on external events.
+	requeueRollout = 15 * time.Second
 )
 
 type BirServiceReconciler struct {
@@ -140,6 +150,20 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 	depKey := types.NamespacedName{Name: depName, Namespace: bs.Namespace}
 	var preExist appsv1.Deployment
 	deploymentExisted := r.Get(ctx, depKey, &preExist) == nil
+
+	// Auto-rollback: if the desired tag was previously quarantined for crash-looping,
+	// keep serving the last healthy tag instead. State lives on the Deployment
+	// annotations (operator-owned). Disabled while canary is active — canary drives
+	// its own image lifecycle. effectiveTag is what actually gets deployed.
+	autoRollback := bs.Spec.Canary == nil || !bs.Spec.Canary.Enabled
+	desiredTag := tagFromImage(image)
+	healthyTag := preExist.Annotations[annotHealthyTag]
+	rolledBackTag := preExist.Annotations[annotRolledBackTag]
+	effectiveTag := desiredTag
+	if autoRollback && desiredTag != "" && desiredTag == rolledBackTag && healthyTag != "" && healthyTag != desiredTag {
+		image = swapImageTag(image, healthyTag)
+		effectiveTag = healthyTag
+	}
 
 	labelJustEnabled, err := r.reconcileNamespaceIstioInjection(ctx, bs)
 	if err != nil {
@@ -227,6 +251,11 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 			// the ingress gateway resolves Endpoints and connects to pod IPs, which bypasses
 			// the service-VIP waypoint binding. Pod-level label routes pod-IP traffic via waypoint too.
 			templateLabels := mergeStringMap(map[string]string{}, labels)
+			// build-tag on the pod (template-only, off the immutable selector) lets the
+			// auto-rollback check select this version's pods and watch them for crashes.
+			if effectiveTag != "" {
+				templateLabels[labelBuildTag] = effectiveTag
+			}
 			// route-group: pods join their pool here (Deployment selector stays
 			// app.kubernetes.io/name — immutable — so this is pod-template only).
 			// The pool's Service selects this label, spanning every member's pods.
@@ -468,7 +497,195 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		}
 	}
 
+	if autoRollback && desiredTag != "" {
+		requeue, err := r.evaluateAutoRollback(ctx, bs, depName, desiredTag, effectiveTag, healthyTag, rolledBackTag)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if requeue > 0 {
+			return ctrl.Result{RequeueAfter: requeue}, nil
+		}
+	}
+
 	return ctrl.Result{}, nil
+}
+
+// tagFromImage returns the image tag (the part after the last colon of the final
+// path segment), or "" when the reference is untagged. The registry host may contain
+// a colon (host:port), so we only look after the last slash.
+func tagFromImage(image string) string {
+	ref := image
+	if slash := strings.LastIndex(image, "/"); slash >= 0 {
+		ref = image[slash+1:]
+	}
+	if i := strings.LastIndex(ref, ":"); i >= 0 {
+		return ref[i+1:]
+	}
+	return ""
+}
+
+// swapImageTag replaces the tag of image with newTag, preserving the registry/repo.
+func swapImageTag(image, newTag string) string {
+	repo := ""
+	name := image
+	if slash := strings.LastIndex(image, "/"); slash >= 0 {
+		repo = image[:slash+1]
+		name = image[slash+1:]
+	}
+	if i := strings.LastIndex(name, ":"); i >= 0 {
+		name = name[:i]
+	}
+	return repo + name + ":" + newTag
+}
+
+func podReady(p *corev1.Pod) bool {
+	for _, c := range p.Status.Conditions {
+		if c.Type == corev1.PodReady {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+// podCrashing reports a pod whose new version is failing to come up: a container in
+// CrashLoopBackOff, or one that has restarted enough times to be clearly unstable.
+func podCrashing(p *corev1.Pod) bool {
+	for _, cs := range p.Status.ContainerStatuses {
+		if cs.State.Waiting != nil && cs.State.Waiting.Reason == "CrashLoopBackOff" {
+			return true
+		}
+		if cs.RestartCount >= 3 {
+			return true
+		}
+	}
+	return false
+}
+
+// assessTagPods counts ready pods and detects crash-looping among the pods of one
+// image tag (selected via the build-tag pod label).
+func (r *BirServiceReconciler) assessTagPods(ctx context.Context, ns, name, tag string) (ready int32, crashing bool, err error) {
+	var pods corev1.PodList
+	if err := r.List(ctx, &pods, client.InNamespace(ns), client.MatchingLabels{
+		"app.kubernetes.io/name": name,
+		labelBuildTag:            tag,
+	}); err != nil {
+		return 0, false, err
+	}
+	for i := range pods.Items {
+		p := &pods.Items[i]
+		if p.DeletionTimestamp != nil {
+			continue
+		}
+		if podReady(p) {
+			ready++
+		}
+		if podCrashing(p) {
+			crashing = true
+		}
+	}
+	return ready, crashing, nil
+}
+
+// evaluateAutoRollback runs the crash-loop rollback state machine for the current
+// rollout and persists healthy-tag / rolled-back-tag on the Deployment. It returns a
+// requeue delay while a rollout is still in flight (so a crash is caught within
+// ~30-60s), or 0 once the state has settled.
+func (r *BirServiceReconciler) evaluateAutoRollback(ctx context.Context, bs *deployv1alpha1.BirService, depName, desiredTag, effectiveTag, healthyTag, rolledBackTag string) (time.Duration, error) {
+	l := log.FromContext(ctx)
+
+	// Already serving the healthy fallback (desiredTag is quarantined): nothing to
+	// advance until a new desiredTag — a fix — arrives.
+	if effectiveTag != desiredTag {
+		return 0, nil
+	}
+
+	var dep appsv1.Deployment
+	if err := r.Get(ctx, types.NamespacedName{Name: depName, Namespace: bs.Namespace}, &dep); err != nil {
+		return 0, client.IgnoreNotFound(err)
+	}
+
+	ready, crashing, err := r.assessTagPods(ctx, bs.Namespace, bs.Name, effectiveTag)
+	if err != nil {
+		return 0, err
+	}
+
+	// Fully rolled out = the new template is observed and every replica is available.
+	rolledOut := dep.Status.ObservedGeneration >= dep.Generation &&
+		dep.Status.UpdatedReplicas == dep.Status.Replicas &&
+		dep.Status.UnavailableReplicas == 0 &&
+		dep.Status.AvailableReplicas > 0 && ready > 0
+
+	newHealthy, newRolledBack := healthyTag, rolledBackTag
+
+	switch {
+	case rolledOut && !crashing:
+		// Desired version is healthy — lock it in as the rollback target.
+		newHealthy = desiredTag
+		if newRolledBack == desiredTag {
+			newRolledBack = ""
+		}
+	case crashing && ready == 0:
+		// Desired version is crash-looping and never became ready.
+		if healthyTag != "" && healthyTag != desiredTag {
+			newRolledBack = desiredTag
+			l.Info("auto-rollback: quarantining crash-looping tag", "tag", desiredTag, "rollbackTo", healthyTag)
+			if r.Recorder != nil {
+				r.Recorder.Eventf(bs, corev1.EventTypeWarning, "AutoRollback",
+					"tag %s crash-looped; rolling back to healthy tag %s", desiredTag, healthyTag)
+			}
+		} else if r.Recorder != nil {
+			r.Recorder.Eventf(bs, corev1.EventTypeWarning, "DeployFailed",
+				"tag %s is crash-looping and there is no previous healthy version to roll back to", desiredTag)
+		}
+	default:
+		// Still progressing — persist unchanged state and re-check shortly.
+		if err := r.setDeploymentRollbackAnnotations(ctx, depName, bs.Namespace, newHealthy, newRolledBack); err != nil {
+			return 0, err
+		}
+		return requeueRollout, nil
+	}
+
+	if err := r.setDeploymentRollbackAnnotations(ctx, depName, bs.Namespace, newHealthy, newRolledBack); err != nil {
+		return 0, err
+	}
+	// Freshly quarantined → requeue so the next pass redeploys the healthy tag.
+	// Not yet settled healthy → keep polling.
+	if newRolledBack != rolledBackTag || newHealthy != desiredTag {
+		return requeueRollout, nil
+	}
+	return 0, nil
+}
+
+// setDeploymentRollbackAnnotations writes (or clears) the auto-rollback state
+// annotations on the Deployment, a no-op when unchanged.
+func (r *BirServiceReconciler) setDeploymentRollbackAnnotations(ctx context.Context, depName, ns, healthy, rolledBack string) error {
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var dep appsv1.Deployment
+		if err := r.Get(ctx, types.NamespacedName{Name: depName, Namespace: ns}, &dep); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		if dep.Annotations == nil {
+			dep.Annotations = map[string]string{}
+		}
+		changed := false
+		setOrDelete := func(key, val string) {
+			if val == "" {
+				if _, ok := dep.Annotations[key]; ok {
+					delete(dep.Annotations, key)
+					changed = true
+				}
+			} else if dep.Annotations[key] != val {
+				dep.Annotations[key] = val
+				changed = true
+			}
+		}
+		setOrDelete(annotHealthyTag, healthy)
+		setOrDelete(annotRolledBackTag, rolledBack)
+		if !changed {
+			return nil
+		}
+		return r.Update(ctx, &dep)
+	})
 }
 
 // reconcileBuild handles Git-based repos: creates a Kaniko build Job, waits for
