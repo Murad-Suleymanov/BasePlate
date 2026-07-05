@@ -61,6 +61,35 @@ func TestPodCrashingAndReady(t *testing.T) {
 	if !podCrashing(restarts) {
 		t.Fatal("expected 3-restart pod to be crashing")
 	}
+	// Backed-off start failures (can't pull image, bad config) also count as failing.
+	for _, reason := range []string{"ImagePullBackOff", "InvalidImageName", "CreateContainerConfigError"} {
+		p := &corev1.Pod{Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{
+				{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: reason}}},
+			},
+		}}
+		if !podCrashing(p) {
+			t.Fatalf("expected %s pod to be failing", reason)
+		}
+	}
+	// A failing init container blocks the pod too.
+	initFail := &corev1.Pod{Status: corev1.PodStatus{
+		InitContainerStatuses: []corev1.ContainerStatus{
+			{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}},
+		},
+	}}
+	if !podCrashing(initFail) {
+		t.Fatal("expected failing init container to mark pod as failing")
+	}
+	// First-attempt ErrImagePull is transient — must NOT trip a rollback.
+	transient := &corev1.Pod{Status: corev1.PodStatus{
+		ContainerStatuses: []corev1.ContainerStatus{
+			{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ErrImagePull"}}},
+		},
+	}}
+	if podCrashing(transient) {
+		t.Fatal("ErrImagePull (first attempt) must not count as failing")
+	}
 	ready := &corev1.Pod{Status: corev1.PodStatus{
 		Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
 	}}

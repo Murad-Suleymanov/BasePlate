@@ -547,14 +547,30 @@ func podReady(p *corev1.Pod) bool {
 	return false
 }
 
-// podCrashing reports a pod whose new version is failing to come up: a container in
-// CrashLoopBackOff, or one that has restarted enough times to be clearly unstable.
+// podCrashing reports a pod whose new version can't come up. Two failure shapes:
+//   - crash-looping: CrashLoopBackOff, or restarted enough times to be clearly unstable
+//   - backed-off start failure the kubelet has already given up retrying: a bad/corrupt
+//     image, an invalid reference, or a missing configMap/secret
+//
+// All are terminal for this rollout — the version won't recover on its own — so they
+// warrant a rollback. We key on the *BackOff/*Error states (not the first-attempt
+// ErrImagePull) so a transient blip doesn't trip a rollback. Init containers count too:
+// a failing init container blocks the pod just the same.
 func podCrashing(p *corev1.Pod) bool {
-	for _, cs := range p.Status.ContainerStatuses {
-		if cs.State.Waiting != nil && cs.State.Waiting.Reason == "CrashLoopBackOff" {
+	statuses := append(append([]corev1.ContainerStatus{}, p.Status.InitContainerStatuses...), p.Status.ContainerStatuses...)
+	for _, cs := range statuses {
+		if cs.RestartCount >= 3 {
 			return true
 		}
-		if cs.RestartCount >= 3 {
+		if cs.State.Waiting == nil {
+			continue
+		}
+		switch cs.State.Waiting.Reason {
+		case "CrashLoopBackOff", // app starts then crashes
+			"ImagePullBackOff",           // image can't be pulled (corrupt/missing/no creds)
+			"InvalidImageName",           // malformed image reference
+			"CreateContainerConfigError", // missing configMap/secret referenced by the pod
+			"CreateContainerError":       // container runtime rejected the spec
 			return true
 		}
 	}
