@@ -577,15 +577,28 @@ func podCrashing(p *corev1.Pod) bool {
 	return false
 }
 
-// assessTagPods counts ready pods and detects crash-looping among the pods of one
-// image tag (selected via the build-tag pod label).
-func (r *BirServiceReconciler) assessTagPods(ctx context.Context, ns, name, tag string) (ready int32, crashing bool, err error) {
+// podMaxRestarts returns the highest restart count across a pod's containers.
+func podMaxRestarts(p *corev1.Pod) int32 {
+	var m int32
+	for _, cs := range append(append([]corev1.ContainerStatus{}, p.Status.InitContainerStatuses...), p.Status.ContainerStatuses...) {
+		if cs.RestartCount > m {
+			m = cs.RestartCount
+		}
+	}
+	return m
+}
+
+// assessTagPods inspects the pods of one image tag (selected via the build-tag pod
+// label): how many are Ready, whether any is failing, and the highest restart count
+// seen. maxRestarts distinguishes a stable version (0) from one that flaps Ready but
+// keeps getting killed (>0) — the latter must not be recorded as a healthy baseline.
+func (r *BirServiceReconciler) assessTagPods(ctx context.Context, ns, name, tag string) (ready int32, crashing bool, maxRestarts int32, err error) {
 	var pods corev1.PodList
 	if err := r.List(ctx, &pods, client.InNamespace(ns), client.MatchingLabels{
 		"app.kubernetes.io/name": name,
 		labelBuildTag:            tag,
 	}); err != nil {
-		return 0, false, err
+		return 0, false, 0, err
 	}
 	for i := range pods.Items {
 		p := &pods.Items[i]
@@ -598,8 +611,11 @@ func (r *BirServiceReconciler) assessTagPods(ctx context.Context, ns, name, tag 
 		if podCrashing(p) {
 			crashing = true
 		}
+		if rc := podMaxRestarts(p); rc > maxRestarts {
+			maxRestarts = rc
+		}
 	}
-	return ready, crashing, nil
+	return ready, crashing, maxRestarts, nil
 }
 
 // evaluateAutoRollback runs the crash-loop rollback state machine for the current
@@ -620,7 +636,7 @@ func (r *BirServiceReconciler) evaluateAutoRollback(ctx context.Context, bs *dep
 		return 0, client.IgnoreNotFound(err)
 	}
 
-	ready, crashing, err := r.assessTagPods(ctx, bs.Namespace, bs.Name, effectiveTag)
+	ready, crashing, maxRestarts, err := r.assessTagPods(ctx, bs.Namespace, bs.Name, effectiveTag)
 	if err != nil {
 		return 0, err
 	}
@@ -631,11 +647,18 @@ func (r *BirServiceReconciler) evaluateAutoRollback(ctx context.Context, bs *dep
 		dep.Status.UnavailableReplicas == 0 &&
 		dep.Status.AvailableReplicas > 0 && ready > 0
 
+	// Only a STABLE rollout becomes the healthy baseline: every replica available with
+	// zero restarts. A version that flaps Ready but keeps getting killed (liveness
+	// failures → restarts) must not poison the baseline. "latest" is never a valid
+	// baseline — the pipeline pushes immutable SHA tags, so latest is a non-deployable
+	// fallback, not a real version.
+	stableHealthy := rolledOut && !crashing && maxRestarts == 0 && desiredTag != "latest"
+
 	newHealthy, newRolledBack := healthyTag, rolledBackTag
 
 	switch {
-	case rolledOut && !crashing:
-		// Desired version is healthy — lock it in as the rollback target.
+	case stableHealthy:
+		// Desired version is stably healthy — lock it in as the rollback target.
 		newHealthy = desiredTag
 		if newRolledBack == desiredTag {
 			newRolledBack = ""
@@ -708,7 +731,8 @@ func (r *BirServiceReconciler) bootstrapHealthyTag(ctx context.Context, bs *depl
 				continue
 			}
 			tag := strings.TrimPrefix(c.Image, repoPrefix)
-			if tag == "" || tag == desiredTag {
+			// Skip the (non-deployable) latest fallback and the failing tag itself.
+			if tag == "" || tag == desiredTag || tag == "latest" {
 				continue
 			}
 			if bestTag == "" || p.CreationTimestamp.Time.After(bestTime) {

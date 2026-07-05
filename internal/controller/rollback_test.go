@@ -255,6 +255,74 @@ func TestBootstrapHealthyTagPicksNewest(t *testing.T) {
 	}
 }
 
+// A version that flaps Ready but keeps restarting (liveness failures) must NOT be
+// recorded as the healthy baseline — otherwise a broken version poisons its own fallback.
+func TestEvaluateAutoRollbackNoPoisonFromFlapping(t *testing.T) {
+	ns := "tenant-a"
+	s := rollbackScheme(t)
+	dep := newDep(ns) // reports fully available
+	pod := tagPod(ns, "app", "v2", "app-flap", true, false)
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{RestartCount: 4}} // ready now, but restarting
+	cl := fake.NewClientBuilder().WithScheme(s).WithObjects(dep, pod).Build()
+	r := &BirServiceReconciler{Client: cl, Scheme: s}
+
+	bs := &deployv1alpha1.BirService{}
+	bs.Name = "app"
+	bs.Namespace = ns
+
+	if _, err := r.evaluateAutoRollback(context.Background(), bs, "app-deploy", "v2", "v2", "", ""); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	var got appsv1.Deployment
+	_ = cl.Get(context.Background(), depKeyFor(ns), &got)
+	if got.Annotations[annotHealthyTag] == "v2" {
+		t.Fatalf("a flapping (restarting) version must not become the healthy baseline, got %v", got.Annotations)
+	}
+}
+
+// "latest" is never a valid healthy baseline (non-deployable pipeline fallback).
+func TestEvaluateAutoRollbackNeverMarksLatestHealthy(t *testing.T) {
+	ns := "tenant-a"
+	s := rollbackScheme(t)
+	dep := newDep(ns)
+	pod := tagPod(ns, "app", "latest", "app-latest", true, false)
+	cl := fake.NewClientBuilder().WithScheme(s).WithObjects(dep, pod).Build()
+	r := &BirServiceReconciler{Client: cl, Scheme: s}
+
+	bs := &deployv1alpha1.BirService{}
+	bs.Name = "app"
+	bs.Namespace = ns
+
+	if _, err := r.evaluateAutoRollback(context.Background(), bs, "app-deploy", "latest", "latest", "", ""); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	var got appsv1.Deployment
+	_ = cl.Get(context.Background(), depKeyFor(ns), &got)
+	if got.Annotations[annotHealthyTag] == "latest" {
+		t.Fatalf("latest must never be recorded as healthy, got %v", got.Annotations)
+	}
+}
+
+// bootstrap must skip a Ready pod running :latest (non-deployable fallback).
+func TestBootstrapHealthyTagSkipsLatest(t *testing.T) {
+	ns := "tenant-a"
+	s := rollbackScheme(t)
+	p := &corev1.Pod{}
+	p.Name = "app-latest"
+	p.Namespace = ns
+	p.Labels = map[string]string{"app.kubernetes.io/name": "app"}
+	p.Spec.Containers = []corev1.Container{{Name: "app", Image: "registry.registry.svc.cluster.local:5000/app:latest"}}
+	p.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+	cl := fake.NewClientBuilder().WithScheme(s).WithObjects(p).Build()
+	r := &BirServiceReconciler{Client: cl, Scheme: s}
+	bs := &deployv1alpha1.BirService{}
+	bs.Name = "app"
+	bs.Namespace = ns
+	if got := r.bootstrapHealthyTag(context.Background(), bs, "v9"); got != "" {
+		t.Fatalf("bootstrap must not pick latest, got %q", got)
+	}
+}
+
 // A fully-rolled-out healthy tag records itself as the healthy rollback target.
 func TestEvaluateAutoRollbackMarksHealthy(t *testing.T) {
 	ns := "tenant-a"
