@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"testing"
+	"time"
 
 	deployv1alpha1 "easy-deploy/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -185,6 +186,72 @@ func TestEvaluateAutoRollbackNoFallback(t *testing.T) {
 	_ = cl.Get(context.Background(), depKeyFor(ns), &got)
 	if _, ok := got.Annotations[annotRolledBackTag]; ok {
 		t.Fatalf("must not quarantine without a healthy fallback, got %v", got.Annotations)
+	}
+}
+
+// With no recorded healthy-tag, a Ready pod on a different tag is used as the
+// bootstrap rollback target (covers services healthy before auto-rollback existed).
+func TestEvaluateAutoRollbackBootstraps(t *testing.T) {
+	ns := "tenant-a"
+	s := rollbackScheme(t)
+	dep := newDep(ns)
+	dep.Status.AvailableReplicas = 1
+	dep.Status.UnavailableReplicas = 1
+	bad := tagPod(ns, "app", "v2", "app-new", false, true) // new version crash-looping
+	good := &corev1.Pod{}                                  // old version still Ready
+	good.Name = "app-old"
+	good.Namespace = ns
+	good.Labels = map[string]string{"app.kubernetes.io/name": "app"}
+	good.Spec.Containers = []corev1.Container{{Name: "app", Image: "registry.registry.svc.cluster.local:5000/app:v1"}}
+	good.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+	cl := fake.NewClientBuilder().WithScheme(s).WithObjects(dep, bad, good).Build()
+	r := &BirServiceReconciler{Client: cl, Scheme: s}
+
+	bs := &deployv1alpha1.BirService{}
+	bs.Name = "app"
+	bs.Namespace = ns
+
+	requeue, err := r.evaluateAutoRollback(context.Background(), bs, "app-deploy", "v2", "v2", "", "")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if requeue == 0 {
+		t.Fatal("expected requeue after bootstrap quarantine")
+	}
+	var got appsv1.Deployment
+	_ = cl.Get(context.Background(), depKeyFor(ns), &got)
+	if got.Annotations[annotRolledBackTag] != "v2" || got.Annotations[annotHealthyTag] != "v1" {
+		t.Fatalf("expected rolled-back=v2 healthy=v1 (bootstrapped), got %v", got.Annotations)
+	}
+}
+
+// With several Ready pods on different tags, bootstrap picks the newest (most recent
+// known-good), not an arbitrary older one.
+func TestBootstrapHealthyTagPicksNewest(t *testing.T) {
+	ns := "tenant-a"
+	s := rollbackScheme(t)
+	img := func(tag string) string { return "registry.registry.svc.cluster.local:5000/app:" + tag }
+	readyPod := func(name, tag string, ageMin int) *corev1.Pod {
+		p := &corev1.Pod{}
+		p.Name = name
+		p.Namespace = ns
+		p.Labels = map[string]string{"app.kubernetes.io/name": "app"}
+		p.CreationTimestamp = metav1.NewTime(time.Now().Add(time.Duration(-ageMin) * time.Minute))
+		p.Spec.Containers = []corev1.Container{{Name: "app", Image: img(tag)}}
+		p.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+		return p
+	}
+	old := readyPod("app-old", "v8", 60)   // older healthy version
+	newer := readyPod("app-new", "v9", 10) // most recent healthy version
+	cl := fake.NewClientBuilder().WithScheme(s).WithObjects(old, newer).Build()
+	r := &BirServiceReconciler{Client: cl, Scheme: s}
+
+	bs := &deployv1alpha1.BirService{}
+	bs.Name = "app"
+	bs.Namespace = ns
+
+	if got := r.bootstrapHealthyTag(context.Background(), bs, "v10"); got != "v9" {
+		t.Fatalf("expected newest healthy tag v9, got %q", got)
 	}
 }
 

@@ -641,17 +641,25 @@ func (r *BirServiceReconciler) evaluateAutoRollback(ctx context.Context, bs *dep
 			newRolledBack = ""
 		}
 	case crashing && ready == 0:
-		// Desired version is crash-looping and never became ready.
-		if healthyTag != "" && healthyTag != desiredTag {
+		// Desired version is failing and never became ready. Prefer the recorded
+		// healthy tag; if none was ever recorded (first sight of the service, or it was
+		// healthy before auto-rollback existed) fall back to the tag of a pod that is
+		// still Ready right now — the previous version maxUnavailable:0 kept serving.
+		fallback := healthyTag
+		if fallback == "" {
+			fallback = r.bootstrapHealthyTag(ctx, bs, desiredTag)
+		}
+		if fallback != "" && fallback != desiredTag {
+			newHealthy = fallback
 			newRolledBack = desiredTag
-			l.Info("auto-rollback: quarantining crash-looping tag", "tag", desiredTag, "rollbackTo", healthyTag)
+			l.Info("auto-rollback: quarantining failing tag", "tag", desiredTag, "rollbackTo", fallback)
 			if r.Recorder != nil {
 				r.Recorder.Eventf(bs, corev1.EventTypeWarning, "AutoRollback",
-					"tag %s crash-looped; rolling back to healthy tag %s", desiredTag, healthyTag)
+					"tag %s failed to roll out; rolling back to healthy tag %s", desiredTag, fallback)
 			}
 		} else if r.Recorder != nil {
 			r.Recorder.Eventf(bs, corev1.EventTypeWarning, "DeployFailed",
-				"tag %s is crash-looping and there is no previous healthy version to roll back to", desiredTag)
+				"tag %s failed to roll out and there is no previous healthy version to roll back to", desiredTag)
 		}
 	default:
 		// Still progressing — persist unchanged state and re-check shortly.
@@ -670,6 +678,45 @@ func (r *BirServiceReconciler) evaluateAutoRollback(ctx context.Context, bs *dep
 		return requeueRollout, nil
 	}
 	return 0, nil
+}
+
+// bootstrapHealthyTag derives a rollback target when none was recorded yet: the app
+// image tag of a pod that is still Ready right now and runs a different tag than the
+// (failing) desired one. This covers a service that was healthy before auto-rollback
+// existed, or the operator's first sight of it — the previous version is still serving
+// (maxUnavailable:0 kept it), so its tag is a safe fallback. "" if there is none.
+func (r *BirServiceReconciler) bootstrapHealthyTag(ctx context.Context, bs *deployv1alpha1.BirService, desiredTag string) string {
+	var pods corev1.PodList
+	if err := r.List(ctx, &pods, client.InNamespace(bs.Namespace), client.MatchingLabels{
+		"app.kubernetes.io/name": bs.Name,
+	}); err != nil {
+		return ""
+	}
+	repoPrefix := fmt.Sprintf("%s/%s:", r.effectiveRegistryURL(), appName(bs))
+	// Pick the newest Ready pod's tag: if several healthy versions still have pods
+	// (e.g. a prior rollout mid-termination), roll back to the most recent known-good
+	// one, not an arbitrary older one. Pod list order is not guaranteed.
+	var bestTag string
+	var bestTime time.Time
+	for i := range pods.Items {
+		p := &pods.Items[i]
+		if p.DeletionTimestamp != nil || !podReady(p) {
+			continue
+		}
+		for _, c := range p.Spec.Containers {
+			if !strings.HasPrefix(c.Image, repoPrefix) {
+				continue
+			}
+			tag := strings.TrimPrefix(c.Image, repoPrefix)
+			if tag == "" || tag == desiredTag {
+				continue
+			}
+			if bestTag == "" || p.CreationTimestamp.Time.After(bestTime) {
+				bestTag, bestTime = tag, p.CreationTimestamp.Time
+			}
+		}
+	}
+	return bestTag
 }
 
 // setDeploymentRollbackAnnotations writes (or clears) the auto-rollback state
