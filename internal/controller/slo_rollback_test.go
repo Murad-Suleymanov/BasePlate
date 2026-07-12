@@ -300,6 +300,33 @@ func TestEvaluateSLOBreachesOnLatency(t *testing.T) {
 	}
 }
 
+// Objectives are OR'd, and BOTH are measured even when one has already failed. A version
+// rolled back for its error rate may also be far too slow; the event must say so, since
+// "what was actually wrong with the build" is the first question after a rollback.
+func TestEvaluateSLOReportsBothObjectivesWhenBothBreach(t *testing.T) {
+	v := sloFixture(t, &deployv1alpha1.AutoRollbackSpec{LatencyP99Ms: ptr32(200)}, map[string]string{
+		"increase":           "1000",
+		"response_code":      "0.05", // 5% errors vs a 1% budget
+		"histogram_quantile": "850",  // and p99 850ms vs a 200ms objective
+	})
+	if !v.evaluated || !v.breached {
+		t.Fatalf("both objectives breached, expected a breach; verdict: %+v", v)
+	}
+	if !strings.Contains(v.reason, "error rate") {
+		t.Errorf("reason = %q, want it to mention the error rate", v.reason)
+	}
+	if !strings.Contains(v.reason, "p99") {
+		t.Errorf("reason = %q, want it to ALSO mention p99 latency", v.reason)
+	}
+	// Latency must be measured, not short-circuited away by the error-rate breach.
+	if v.p99Ms != 850 {
+		t.Errorf("p99Ms = %v, want 850 (latency must still be queried)", v.p99Ms)
+	}
+}
+
+// Latency alone can condemn a version whose error rate is clean (the OR, other direction).
+// Covered by TestEvaluateSLOBreachesOnLatency.
+
 // Latency is only gated when an objective is set: the default is error-rate only.
 func TestEvaluateSLOIgnoresLatencyWhenUnset(t *testing.T) {
 	v := sloFixture(t, nil, map[string]string{

@@ -273,7 +273,7 @@
             "latencyP99Ms": {
               "type": "integer",
               "minimum": 1,
-              "description": "Optional p99 latency objective in ms. Omit to gate on error rate alone."
+              "description": "Optional p99 latency objective in ms — catches the deploy that returns clean 200s but takes seconds to do it. Objectives combine as OR: with both set, breaching either the error budget or this rolls the version back. Omit to gate on error rate alone."
             }
           }
         }

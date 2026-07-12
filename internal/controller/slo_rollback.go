@@ -145,7 +145,12 @@ type sloVerdict struct {
 }
 
 // evaluateSLO asks Prometheus how build tag `tag` of this service is behaving over the
-// configured window and reports whether it is burning its error budget.
+// configured window and reports whether it is breaching any of its objectives.
+//
+// Objectives are independent and combine as OR: the error budget always applies, and a
+// latency objective applies when one is configured. Breaching EITHER condemns the version.
+// Both are measured on every pass, even after one has already failed, so the resulting
+// event reports everything that is wrong with the build rather than just the first thing.
 //
 // Fail-open by design: any missing signal (Prometheus down, no metrics yet, too little
 // traffic) returns evaluated=false and never a breach. A monitoring outage must not be
@@ -202,13 +207,20 @@ func (r *BirServiceReconciler) evaluateSLO(
 
 	v := sloVerdict{evaluated: true, errorRatio: ratio, requests: requests}
 
+	// Every configured objective is evaluated, and breaching ANY of them condemns the
+	// version. Both are checked even once one has already failed: a version rolled back
+	// for its error rate may ALSO be far too slow, and the event should say so — the
+	// first thing anyone asks after a rollback is what was actually wrong with the build.
+	var reasons []string
+
 	if budget := cfg.errorBudget(); ratio > budget {
 		v.breached = true
-		v.reason = fmt.Sprintf("error rate %.2f%% over %s exceeds the %.2f%% error budget (SLO %.2f%%, %.0f requests)",
-			ratio*100, cfg.window, budget*100, cfg.sloPercent, requests)
-		return v
+		reasons = append(reasons, fmt.Sprintf(
+			"error rate %.2f%% exceeds the %.2f%% error budget (SLO %.2f%%)",
+			ratio*100, budget*100, cfg.sloPercent))
 	}
 
+	// Latency is only an objective when one is set; omitted means error-rate only.
 	if cfg.latencyP99Ms > 0 {
 		p99, ok := r.promScalar(ctx, fmt.Sprintf(
 			`histogram_quantile(0.99, sum by (le) (rate(istio_request_duration_milliseconds_bucket{%s}[%s])))`,
@@ -218,10 +230,15 @@ func (r *BirServiceReconciler) evaluateSLO(
 			v.p99Ms = p99
 			if p99 > cfg.latencyP99Ms {
 				v.breached = true
-				v.reason = fmt.Sprintf("p99 latency %.0fms over %s exceeds the %.0fms objective (%.0f requests)",
-					p99, cfg.window, cfg.latencyP99Ms, requests)
+				reasons = append(reasons, fmt.Sprintf(
+					"p99 latency %.0fms exceeds the %.0fms objective", p99, cfg.latencyP99Ms))
 			}
 		}
+	}
+
+	if v.breached {
+		v.reason = fmt.Sprintf("%s — over %s, %.0f requests",
+			strings.Join(reasons, "; and "), cfg.window, requests)
 	}
 	return v
 }

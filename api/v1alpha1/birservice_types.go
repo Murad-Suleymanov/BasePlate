@@ -244,6 +244,13 @@ type AutoRollbackSpec struct {
 	// LatencyP99Ms adds a latency objective in milliseconds: a new version whose p99
 	// request duration over Window exceeds this is breaching, even if its error rate is
 	// clean. Omit to gate on error rate alone (the default).
+	//
+	// Objectives combine as OR — when both are set, breaching EITHER the error budget or
+	// the latency objective rolls the version back. Both are always measured, so a
+	// rollback event reports every objective the version failed, not just the first.
+	// This catches the bad deploy that returns a perfectly clean 200 but takes 3 seconds
+	// to do it (a lost index, a sync call added to a hot path): the error-rate gate is
+	// blind to it, because nothing is failing — it is just useless.
 	LatencyP99Ms *int32 `json:"latencyP99Ms,omitempty"`
 }
 

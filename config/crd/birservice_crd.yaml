@@ -233,7 +233,7 @@ spec:
                           type: integer
                           format: int32
                           minimum: 1
-                          description: "Optional latency objective in ms: a version whose p99 over the window exceeds this is breaching even with a clean error rate. Omit to gate on error rate alone."
+                          description: "Optional latency objective in ms: a version whose p99 over the window exceeds this is breaching even with a clean error rate (catches the deploy that returns 200s but takes seconds to do it). Objectives combine as OR — with both set, breaching EITHER the error budget or this rolls the version back. Omit to gate on error rate alone."
                 readinessProbe:
                   type: object
                   description: HTTP readiness probe. Port defaults to container port.
