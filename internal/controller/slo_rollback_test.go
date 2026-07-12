@@ -1,4 +1,4 @@
-package controller
+﻿package controller
 
 import (
 	"context"
@@ -178,7 +178,7 @@ func sloFixture(t *testing.T, ar *deployv1alpha1.AutoRollbackSpec, byQuery map[s
 
 	bs := meshBS(ar)
 	r := &BirServiceReconciler{PromURL: srv.URL}
-	return r.evaluateSLO(context.Background(), bs, resolveAutoRollback(bs), "app-deploy", "abc123", 10*time.Minute)
+	return r.evaluateSLO(context.Background(), bs, resolveAutoRollback(bs), "abc123", 10*time.Minute)
 }
 
 func TestEvaluateSLOBreachesOnErrorBudget(t *testing.T) {
@@ -231,7 +231,7 @@ func TestEvaluateSLOTooYoungIsNotJudged(t *testing.T) {
 
 	bs := meshBS(nil)
 	r := &BirServiceReconciler{PromURL: srv.URL}
-	v := r.evaluateSLO(context.Background(), bs, resolveAutoRollback(bs), "app-deploy", "abc123", time.Second)
+	v := r.evaluateSLO(context.Background(), bs, resolveAutoRollback(bs), "abc123", time.Second)
 	if v.evaluated || v.breached {
 		t.Fatalf("a version younger than the grace period must not be judged; verdict: %+v", v)
 	}
@@ -246,7 +246,7 @@ func TestEvaluateSLOFailsOpenWhenPrometheusIsDown(t *testing.T) {
 
 	bs := meshBS(nil)
 	r := &BirServiceReconciler{PromURL: srv.URL}
-	v := r.evaluateSLO(context.Background(), bs, resolveAutoRollback(bs), "app-deploy", "abc123", 10*time.Minute)
+	v := r.evaluateSLO(context.Background(), bs, resolveAutoRollback(bs), "abc123", 10*time.Minute)
 	if v.evaluated || v.breached {
 		t.Fatalf("a Prometheus 500 must fail open, not breach; verdict: %+v", v)
 	}
@@ -256,7 +256,7 @@ func TestEvaluateSLOFailsOpenWhenPrometheusIsDown(t *testing.T) {
 func TestEvaluateSLONoPrometheusURLIsInert(t *testing.T) {
 	bs := meshBS(nil)
 	r := &BirServiceReconciler{}
-	v := r.evaluateSLO(context.Background(), bs, resolveAutoRollback(bs), "app-deploy", "abc123", 10*time.Minute)
+	v := r.evaluateSLO(context.Background(), bs, resolveAutoRollback(bs), "abc123", 10*time.Minute)
 	if v.evaluated || v.breached {
 		t.Fatalf("with no PromURL the gate must be inert; verdict: %+v", v)
 	}
@@ -273,7 +273,7 @@ func TestEvaluateSLOModeOffIssuesNoQuery(t *testing.T) {
 
 	bs := meshBS(&deployv1alpha1.AutoRollbackSpec{Mode: autoRollbackModeOff})
 	r := &BirServiceReconciler{PromURL: srv.URL}
-	v := r.evaluateSLO(context.Background(), bs, resolveAutoRollback(bs), "app-deploy", "abc123", 10*time.Minute)
+	v := r.evaluateSLO(context.Background(), bs, resolveAutoRollback(bs), "abc123", 10*time.Minute)
 	if v.evaluated || v.breached {
 		t.Fatalf("mode off must not evaluate; verdict: %+v", v)
 	}
@@ -336,6 +336,53 @@ func TestEvaluateSLOIgnoresLatencyWhenUnset(t *testing.T) {
 	})
 	if v.breached {
 		t.Fatalf("with no latencyP99Ms set, latency must not breach; verdict: %+v", v)
+	}
+}
+
+// Regression: a pool member must be judged on the WHOLE pool's traffic for its build tag,
+// not on its own Deployment's slice of it.
+//
+// hello-csharp/prod runs main (3 replicas) and testing (1 replica) in one route-group pool.
+// Scoping the query per-Deployment (destination_workload) meant testing only ever saw ~1/4
+// of pool traffic, never reached minRequests, and was never judged -- so when a build was
+// bad, main rolled back and testing kept serving it. The pool then served a MIX of the good
+// and the bad version, which is worse than not rolling back at all.
+//
+// The query must select on destination_canonical_service (the app, shared by every pool
+// member) plus destination_canonical_revision (the build tag), and must NOT pin
+// destination_workload.
+func TestEvaluateSLOScopesQueryToThePoolNotTheInstance(t *testing.T) {
+	var queries []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.Query().Get("query"))
+		fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1700000000,"1000"]}]}}`)
+	}))
+	defer srv.Close()
+
+	// The small member of the pool. appName() resolves the GitHub repo, so both members
+	// report under one canonical service ("hello-csharp") while their workloads differ.
+	bs := meshBS(nil)
+	bs.Name = "hello-csharp-testing"
+	bs.Namespace = "hello-csharp"
+	bs.Spec.Repo = "https://github.com/Murad-Suleymanov/hello-csharp"
+
+	r := &BirServiceReconciler{PromURL: srv.URL}
+	r.evaluateSLO(context.Background(), bs, resolveAutoRollback(bs), "abc123", 10*time.Minute)
+
+	if len(queries) == 0 {
+		t.Fatal("expected the gate to query Prometheus")
+	}
+	for _, q := range queries {
+		if !strings.Contains(q, `destination_canonical_service="hello-csharp"`) {
+			t.Errorf("query must aggregate the pool by canonical service, got: %s", q)
+		}
+		if !strings.Contains(q, `destination_canonical_revision="abc123"`) {
+			t.Errorf("query must pin exactly one build tag, got: %s", q)
+		}
+		if strings.Contains(q, "destination_workload=") {
+			t.Errorf("query must NOT scope to a single Deployment -- that is the bug that let "+
+				"a small pool member escape the gate entirely. Got: %s", q)
+		}
 	}
 }
 

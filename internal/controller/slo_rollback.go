@@ -159,7 +159,7 @@ func (r *BirServiceReconciler) evaluateSLO(
 	ctx context.Context,
 	bs *deployv1alpha1.BirService,
 	cfg autoRollbackConfig,
-	depName, tag string,
+	tag string,
 	versionAge time.Duration,
 ) sloVerdict {
 	l := log.FromContext(ctx)
@@ -178,11 +178,23 @@ func (r *BirServiceReconciler) evaluateSLO(
 		return sloVerdict{}
 	}
 
-	// destination_workload is the Deployment, so this is scoped to THIS BirService even
-	// when several instances share a route-group pool; the revision pins it to ONE version.
+	// Scope: ONE build tag across the WHOLE pool — canonical_service (the app, shared by
+	// every route-group member) plus canonical_revision (the build tag).
+	//
+	// Deliberately NOT destination_workload (the Deployment). A pool is one logical service
+	// whose members all run the same build tag, so "is this Deployment healthy" is the wrong
+	// question and scoping per-Deployment breaks it twice:
+	//   - Volume: pool traffic is split across members, so a small member (1 replica beside
+	//     a 3-replica sibling) never reaches minRequests on its own and is never judged.
+	//   - Consistency: members would reach different verdicts, so the big one rolls back
+	//     while the small one keeps serving the bad tag — the pool ends up serving a MIX of
+	//     good and bad versions, which is worse than not rolling back at all.
+	// Aggregating by canonical_service fixes both: every member sees the same evidence and
+	// the same verdict, so the pool rolls back as a unit. The revision label still pins the
+	// query to one version, so a member pinned to a different tag is judged on its own pods.
 	sel := fmt.Sprintf(
-		`destination_workload_namespace=%q,destination_workload=%q,destination_canonical_revision=%q`,
-		bs.Namespace, depName, tag,
+		`destination_workload_namespace=%q,destination_canonical_service=%q,destination_canonical_revision=%q`,
+		bs.Namespace, appName(bs), tag,
 	)
 
 	// Volume guard first: judging a version on a handful of requests is how a low-traffic

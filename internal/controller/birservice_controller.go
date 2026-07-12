@@ -686,7 +686,7 @@ func (r *BirServiceReconciler) evaluateAutoRollback(ctx context.Context, bs *dep
 
 	var verdict sloVerdict
 	if sloActive && rolledOut {
-		verdict = r.evaluateSLO(ctx, bs, cfg, depName, effectiveTag, versionAge)
+		verdict = r.evaluateSLO(ctx, bs, cfg, effectiveTag, versionAge)
 	}
 	sloBreached := verdict.evaluated && verdict.breached
 	if sloBreached {
