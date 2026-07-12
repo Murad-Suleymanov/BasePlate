@@ -244,6 +244,38 @@
         "latencyAware": {
           "type": "boolean",
           "description": "LB algorithm. Default false (round-robin). True = least-request. Verify with P50/P99 histograms before enabling."
+        },
+        "autoRollback": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "SLO gate on a rollout: roll back a new version that comes up Ready but burns its error budget. Crash-loop rollback is always on and is not configured here.",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": ["off", "monitor", "enforce"],
+              "description": "monitor (default) = evaluate and emit SLOBreach events, never roll back. enforce = roll back a breaching version. off = skip the gate."
+            },
+            "slo": {
+              "type": "string",
+              "pattern": "^(100|[0-9]{1,2})(\\.[0-9]+)?$",
+              "description": "Success-rate objective as a percent, e.g. \"99\" or \"99.5\". Error budget is (100 - slo). Default \"99\"."
+            },
+            "window": {
+              "type": "string",
+              "pattern": "^([0-9]+(ms|s|m|h|d|w|y))+$",
+              "description": "Trailing evaluation window (Prometheus duration, e.g. 2m). A rollback gate, not a smoothing window. Default 2m, floor 1m."
+            },
+            "minRequests": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Volume guard: requests the new version must serve within the window before it can be judged. Default 50. This, not a longer window, protects low-traffic services."
+            },
+            "latencyP99Ms": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Optional p99 latency objective in ms. Omit to gate on error rate alone."
+            }
+          }
         }
       }
     },

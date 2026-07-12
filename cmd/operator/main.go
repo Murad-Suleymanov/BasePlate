@@ -57,11 +57,20 @@ func main() {
 	targetIP := os.Getenv("TARGET_IP")
 	registryURL := os.Getenv("REGISTRY_URL")
 	environment := os.Getenv("ENVIRONMENT")
+	prometheusURL := os.Getenv("PROMETHEUS_URL")
 	if baseDomain != "" {
 		ctrl.Log.Info("auto-hostname enabled", "baseDomain", baseDomain, "targetIP", targetIP)
 	}
 	if registryURL != "" {
 		ctrl.Log.Info("registry override enabled", "registryURL", registryURL)
+	}
+	// Without Prometheus the SLO rollback gate cannot form an opinion and stays inert;
+	// crash-loop rollback is unaffected (it reads pod status). Say which mode we are in
+	// so a missing URL is not mistaken for "no service ever breaches".
+	if prometheusURL != "" {
+		ctrl.Log.Info("SLO rollback gate enabled", "prometheusURL", prometheusURL)
+	} else {
+		ctrl.Log.Info("SLO rollback gate inert: PROMETHEUS_URL is not set (crash-loop rollback still active)")
 	}
 
 	if err := (&controller.BirServiceReconciler{
@@ -72,6 +81,7 @@ func main() {
 		TargetIP:    targetIP,
 		RegistryURL: registryURL,
 		Environment: environment,
+		PromURL:     prometheusURL,
 	}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.Error(err, "unable to create controller", "controller", "BirService")
 		os.Exit(1)

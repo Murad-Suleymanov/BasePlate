@@ -77,6 +77,10 @@ type BirServiceReconciler struct {
 	TargetIP    string
 	RegistryURL string
 	Environment string
+	// PromURL is the in-cluster Prometheus base URL the SLO rollback gate queries
+	// (e.g. http://prometheus-operated.monitoring:9090). Empty disables the gate —
+	// crash-loop rollback still works, since it reads pod status, not metrics.
+	PromURL string
 }
 
 func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res ctrl.Result, err error) {
@@ -267,7 +271,18 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 			// testing report under one app; destination_workload still distinguishes
 			// each instance. Standalone apps already equal their app name (no-op).
 			templateLabels[labelCanonicalName] = appName(bs)
-			templateLabels[labelCanonicalRevision] = "latest"
+			// Canonical revision = the deployed build tag, so Istio stamps
+			// destination_canonical_revision on every request metric and the SLO gate can
+			// attribute errors to ONE version. It must be the build tag, not a constant:
+			// maxUnavailable:0 keeps the old version serving while the new one rolls out,
+			// so both are in the metric stream at once and a constant revision would blend
+			// them — a bad new version would hide behind the healthy old one's traffic.
+			// Falls back to "latest" for untagged images (nothing to attribute).
+			if effectiveTag != "" {
+				templateLabels[labelCanonicalRevision] = effectiveTag
+			} else {
+				templateLabels[labelCanonicalRevision] = "latest"
+			}
 			if bsNeedsWaypoint(bs) {
 				templateLabels[labelUseWaypoint] = waypointName
 			}
@@ -589,17 +604,21 @@ func podMaxRestarts(p *corev1.Pod) int32 {
 }
 
 // assessTagPods inspects the pods of one image tag (selected via the build-tag pod
-// label): how many are Ready, whether any is failing, and the highest restart count
-// seen. maxRestarts distinguishes a stable version (0) from one that flaps Ready but
-// keeps getting killed (>0) — the latter must not be recorded as a healthy baseline.
-func (r *BirServiceReconciler) assessTagPods(ctx context.Context, ns, name, tag string) (ready int32, crashing bool, maxRestarts int32, err error) {
+// label): how many are Ready, whether any is failing, the highest restart count seen,
+// and how long this version has existed. maxRestarts distinguishes a stable version (0)
+// from one that flaps Ready but keeps getting killed (>0) — the latter must not be
+// recorded as a healthy baseline. age is measured from the OLDEST pod of the tag (when
+// the version first appeared) and gates the SLO grace period, so a version is not judged
+// on the requests it served while still warming up.
+func (r *BirServiceReconciler) assessTagPods(ctx context.Context, ns, name, tag string) (ready int32, crashing bool, maxRestarts int32, age time.Duration, err error) {
 	var pods corev1.PodList
 	if err := r.List(ctx, &pods, client.InNamespace(ns), client.MatchingLabels{
 		"app.kubernetes.io/name": name,
 		labelBuildTag:            tag,
 	}); err != nil {
-		return 0, false, 0, err
+		return 0, false, 0, 0, err
 	}
+	var oldest time.Time
 	for i := range pods.Items {
 		p := &pods.Items[i]
 		if p.DeletionTimestamp != nil {
@@ -614,14 +633,25 @@ func (r *BirServiceReconciler) assessTagPods(ctx context.Context, ns, name, tag 
 		if rc := podMaxRestarts(p); rc > maxRestarts {
 			maxRestarts = rc
 		}
+		if ct := p.CreationTimestamp.Time; !ct.IsZero() && (oldest.IsZero() || ct.Before(oldest)) {
+			oldest = ct
+		}
 	}
-	return ready, crashing, maxRestarts, nil
+	if !oldest.IsZero() {
+		age = time.Since(oldest)
+	}
+	return ready, crashing, maxRestarts, age, nil
 }
 
-// evaluateAutoRollback runs the crash-loop rollback state machine for the current
-// rollout and persists healthy-tag / rolled-back-tag on the Deployment. It returns a
-// requeue delay while a rollout is still in flight (so a crash is caught within
-// ~30-60s), or 0 once the state has settled.
+// evaluateAutoRollback runs the rollback state machine for the current rollout and
+// persists healthy-tag / rolled-back-tag on the Deployment. It returns a requeue delay
+// while a rollout is still in flight (so a crash is caught within ~30-60s), or 0 once the
+// state has settled.
+//
+// Two independent failure signals feed it:
+//   - crash-loop (pod status): the version never comes up. Always enabled.
+//   - SLO breach (Istio metrics): the version comes up Ready but burns its error budget.
+//     Configured via spec.traffic.autoRollback; only "enforce" mode can roll back.
 func (r *BirServiceReconciler) evaluateAutoRollback(ctx context.Context, bs *deployv1alpha1.BirService, depName, desiredTag, effectiveTag, healthyTag, rolledBackTag string) (time.Duration, error) {
 	l := log.FromContext(ctx)
 
@@ -636,7 +666,7 @@ func (r *BirServiceReconciler) evaluateAutoRollback(ctx context.Context, bs *dep
 		return 0, client.IgnoreNotFound(err)
 	}
 
-	ready, crashing, maxRestarts, err := r.assessTagPods(ctx, bs.Namespace, bs.Name, effectiveTag)
+	ready, crashing, maxRestarts, versionAge, err := r.assessTagPods(ctx, bs.Namespace, bs.Name, effectiveTag)
 	if err != nil {
 		return 0, err
 	}
@@ -647,45 +677,74 @@ func (r *BirServiceReconciler) evaluateAutoRollback(ctx context.Context, bs *dep
 		dep.Status.UnavailableReplicas == 0 &&
 		dep.Status.AvailableReplicas > 0 && ready > 0
 
+	// SLO gate. Only ask Prometheus once the version is actually serving — before that
+	// there is nothing to measure. Enforcement additionally requires mode: enforce, so
+	// the default (monitor) observes and reports without ever changing the outcome.
+	cfg := resolveAutoRollback(bs)
+	sloActive := cfg.mode != autoRollbackModeOff && r.PromURL != ""
+	enforcing := sloActive && cfg.mode == autoRollbackModeEnforce
+
+	var verdict sloVerdict
+	if sloActive && rolledOut {
+		verdict = r.evaluateSLO(ctx, bs, cfg, depName, effectiveTag, versionAge)
+	}
+	sloBreached := verdict.evaluated && verdict.breached
+	if sloBreached {
+		sloBreachTotal.WithLabelValues(bs.Namespace, bs.Name, cfg.mode).Inc()
+		l.Info("SLO gate: version is breaching its objective",
+			"tag", desiredTag, "mode", cfg.mode, "reason", verdict.reason)
+		if !enforcing && r.Recorder != nil {
+			// monitor mode: report only. This is the dry run — the state machine below
+			// proceeds exactly as it would without the gate.
+			r.Recorder.Eventf(bs, corev1.EventTypeWarning, "SLOBreach",
+				"tag %s is breaching its SLO (%s); autoRollback.mode is %q, so no rollback was performed",
+				desiredTag, verdict.reason, cfg.mode)
+		}
+	}
+
+	// A Ready version is not trustworthy the moment its pods go green — a bad build serves
+	// errors while looking perfectly healthy to the kubelet. Keep watching until the SLO
+	// window has actually elapsed, and only then let it become the rollback baseline.
+	// Without this, the baseline would be recorded ~30s in, and a breach detected at ~2m
+	// would find its only fallback IS the bad version ("no previous healthy version").
+	// When the gate is off (or Prometheus is absent) there is nothing to wait for.
+	observationDone := !sloActive || versionAge >= cfg.observationPeriod()
+
 	// Only a STABLE rollout becomes the healthy baseline: every replica available with
 	// zero restarts. A version that flaps Ready but keeps getting killed (liveness
 	// failures → restarts) must not poison the baseline. "latest" is never a valid
 	// baseline — the pipeline pushes immutable SHA tags, so latest is a non-deployable
 	// fallback, not a real version.
-	stableHealthy := rolledOut && !crashing && maxRestarts == 0 && desiredTag != "latest"
+	stableHealthy := rolledOut && !crashing && maxRestarts == 0 && desiredTag != "latest" && observationDone
 
 	newHealthy, newRolledBack := healthyTag, rolledBackTag
 
 	switch {
-	case stableHealthy:
-		// Desired version is stably healthy — lock it in as the rollback target.
-		newHealthy = desiredTag
-		if newRolledBack == desiredTag {
-			newRolledBack = ""
-		}
 	case crashing && ready == 0:
 		// Desired version is failing and never became ready. Prefer the recorded
 		// healthy tag; if none was ever recorded (first sight of the service, or it was
 		// healthy before auto-rollback existed) fall back to the tag of a pod that is
 		// still Ready right now — the previous version maxUnavailable:0 kept serving.
-		fallback := healthyTag
-		if fallback == "" {
-			fallback = r.bootstrapHealthyTag(ctx, bs, desiredTag)
-		}
-		if fallback != "" && fallback != desiredTag {
-			newHealthy = fallback
-			newRolledBack = desiredTag
-			l.Info("auto-rollback: quarantining failing tag", "tag", desiredTag, "rollbackTo", fallback)
-			if r.Recorder != nil {
-				r.Recorder.Eventf(bs, corev1.EventTypeWarning, "AutoRollback",
-					"tag %s failed to roll out; rolling back to healthy tag %s", desiredTag, fallback)
-			}
-		} else if r.Recorder != nil {
-			r.Recorder.Eventf(bs, corev1.EventTypeWarning, "DeployFailed",
-				"tag %s failed to roll out and there is no previous healthy version to roll back to", desiredTag)
+		newHealthy, newRolledBack = r.quarantineTag(ctx, bs, desiredTag, healthyTag, newRolledBack,
+			fmt.Sprintf("tag %s failed to roll out", desiredTag))
+	case enforcing && sloBreached:
+		// Desired version came up Ready but is burning its error budget. Same quarantine
+		// as a crash: revert to the last healthy tag and keep serving it until a new build
+		// arrives. Unlike the crash path there are no old pods left to bootstrap from (the
+		// rollout completed), so this relies on the healthy-tag recorded by the previous
+		// good deploy — which is exactly why observationDone gates that recording.
+		newHealthy, newRolledBack = r.quarantineTag(ctx, bs, desiredTag, healthyTag, newRolledBack,
+			fmt.Sprintf("tag %s breached its SLO (%s)", desiredTag, verdict.reason))
+	case stableHealthy:
+		// Desired version is stably healthy AND has survived its SLO window — lock it in
+		// as the rollback target.
+		newHealthy = desiredTag
+		if newRolledBack == desiredTag {
+			newRolledBack = ""
 		}
 	default:
-		// Still progressing — persist unchanged state and re-check shortly.
+		// Still progressing, or Ready but still inside its SLO observation window.
+		// Persist unchanged state and re-check shortly.
 		if err := r.setDeploymentRollbackAnnotations(ctx, depName, bs.Namespace, newHealthy, newRolledBack); err != nil {
 			return 0, err
 		}
@@ -701,6 +760,41 @@ func (r *BirServiceReconciler) evaluateAutoRollback(ctx context.Context, bs *dep
 		return requeueRollout, nil
 	}
 	return 0, nil
+}
+
+// quarantineTag condemns desiredTag and returns the (healthy, rolled-back) annotation
+// values that revert to the last good version: the next reconcile sees desiredTag ==
+// rolled-back-tag and swaps the image back to healthy, which keeps serving until a NEW
+// build tag — a fix — arrives.
+//
+// Shared by the crash-loop and SLO paths: they differ only in how a version was condemned,
+// never in what happens next. reason is a sentence fragment describing the condemnation
+// ("tag abc123 failed to roll out"), used verbatim in the event.
+//
+// When there is no good version to fall back to, nothing is quarantined — rolling back to
+// a version we have never seen working would trade one outage for another. The caller's
+// state is returned unchanged and a DeployFailed event says so.
+func (r *BirServiceReconciler) quarantineTag(ctx context.Context, bs *deployv1alpha1.BirService, desiredTag, healthyTag, rolledBackTag, reason string) (string, string) {
+	l := log.FromContext(ctx)
+
+	fallback := healthyTag
+	if fallback == "" {
+		fallback = r.bootstrapHealthyTag(ctx, bs, desiredTag)
+	}
+	if fallback == "" || fallback == desiredTag {
+		if r.Recorder != nil {
+			r.Recorder.Eventf(bs, corev1.EventTypeWarning, "DeployFailed",
+				"%s and there is no previous healthy version to roll back to", reason)
+		}
+		return healthyTag, rolledBackTag
+	}
+
+	l.Info("auto-rollback: quarantining tag", "tag", desiredTag, "rollbackTo", fallback, "reason", reason)
+	if r.Recorder != nil {
+		r.Recorder.Eventf(bs, corev1.EventTypeWarning, "AutoRollback",
+			"%s; rolling back to healthy tag %s", reason, fallback)
+	}
+	return fallback, desiredTag
 }
 
 // bootstrapHealthyTag derives a rollback target when none was recorded yet: the app

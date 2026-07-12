@@ -18,6 +18,13 @@ operator:
       value: ":8081"
   extraArgs: []
 
+  # preStop sleep for the operator pod: drains it from endpoints before SIGTERM.
+  # deployment.yaml reads operator.lifecycle.preStopSleepSeconds directly, so this key
+  # must exist — its `| default 5` cannot save a missing `lifecycle` parent (the nil
+  # dereference happens before the default is applied).
+  lifecycle:
+    preStopSleepSeconds: 5
+
   env:
     environment:
       enabled: true
@@ -32,6 +39,12 @@ operator:
       enabled: true
       value: ""
     webhookURL:
+      enabled: true
+      value: ""
+    # Prometheus the SLO rollback gate queries for per-version error rate / latency.
+    # Empty leaves the gate inert (crash-loop rollback still works — it reads pod status,
+    # not metrics), so a cluster without monitoring degrades quietly instead of failing.
+    prometheusURL:
       enabled: true
       value: ""
   extraEnv: []
@@ -335,6 +348,33 @@ crd:
         latencyAware:
           type: boolean
           description: "LB algorithm. Default false (round-robin). True switches to least-request, useful when request latency is heterogeneous (cache hits vs DB calls). Verify with P50/P99 histograms before enabling."
+        autoRollback:
+          type: object
+          description: "SLO gate on a rollout: roll back a new version that comes up Ready but burns its error budget. Crash-loop rollback is always on and is not configured here."
+          properties:
+            mode:
+              type: string
+              enum:
+                - "off"
+                - monitor
+                - enforce
+              description: "monitor (default) = evaluate and emit SLOBreach events, never roll back (dry run). enforce = roll back a breaching version. off = skip the SLO gate."
+            slo:
+              type: string
+              description: "Success-rate objective as a percent, e.g. \"99\" or \"99.5\". The error budget is (100 - slo). Default \"99\"."
+            window:
+              type: string
+              description: "Trailing evaluation window (Prometheus duration, e.g. 2m). A rollback gate, not a smoothing window — longer means a bad version serves errors for longer. Default 2m, floor 1m."
+            minRequests:
+              type: integer
+              format: int32
+              minimum: 0
+              description: "Volume guard: the new version must serve at least this many requests within the window before it can be judged. Default 50. This, not a longer window, is what protects low-traffic services."
+            latencyP99Ms:
+              type: integer
+              format: int32
+              minimum: 1
+              description: "Optional latency objective in ms: a version whose p99 over the window exceeds this is breaching even with a clean error rate. Omit to gate on error rate alone."
     readinessProbe:
       type: object
       description: "HTTP readiness probe. Port defaults to container port."

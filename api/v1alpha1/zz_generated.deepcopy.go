@@ -169,6 +169,11 @@ func (in *TrafficSpec) DeepCopyInto(out *TrafficSpec) {
 		*out = new(bool)
 		**out = **in
 	}
+	if in.AutoRollback != nil {
+		in, out := &in.AutoRollback, &out.AutoRollback
+		*out = new(AutoRollbackSpec)
+		(*in).DeepCopyInto(*out)
+	}
 }
 
 func (in *TrafficSpec) DeepCopy() *TrafficSpec {
@@ -176,6 +181,29 @@ func (in *TrafficSpec) DeepCopy() *TrafficSpec {
 		return nil
 	}
 	out := new(TrafficSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *AutoRollbackSpec) DeepCopyInto(out *AutoRollbackSpec) {
+	*out = *in
+	if in.MinRequests != nil {
+		in, out := &in.MinRequests, &out.MinRequests
+		*out = new(int32)
+		**out = **in
+	}
+	if in.LatencyP99Ms != nil {
+		in, out := &in.LatencyP99Ms, &out.LatencyP99Ms
+		*out = new(int32)
+		**out = **in
+	}
+}
+
+func (in *AutoRollbackSpec) DeepCopy() *AutoRollbackSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(AutoRollbackSpec)
 	in.DeepCopyInto(out)
 	return out
 }

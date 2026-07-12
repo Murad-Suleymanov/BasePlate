@@ -62,6 +62,10 @@ spec:
             - name: WEBHOOK_URL
               value: {{ .Values.operator.env.webhookURL.value | quote }}
 {{- end }}
+{{- if .Values.operator.env.prometheusURL.enabled }}
+            - name: PROMETHEUS_URL
+              value: {{ .Values.operator.env.prometheusURL.value | quote }}
+{{- end }}
 {{- range .Values.operator.extraEnv }}
             - name: {{ .name }}
               value: {{ .value | quote }}

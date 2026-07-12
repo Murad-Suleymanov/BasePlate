@@ -198,6 +198,53 @@ type TrafficSpec struct {
 	// automatically get less traffic. For uniform request latency, round-robin is
 	// usually better. Verify with latency histograms (P50 vs P99) before enabling.
 	LatencyAware *bool `json:"latencyAware,omitempty"`
+
+	// AutoRollback gates a rollout on the new version's SLO, not just on whether its
+	// pods start. Crash-loop rollback is ALWAYS on and is not configured here — this
+	// covers the version that comes up Ready but serves errors or runs slow, which the
+	// crash detector cannot see. Requires mesh (spec.traffic) since the signal is Istio
+	// request metrics sliced by build tag.
+	AutoRollback *AutoRollbackSpec `json:"autoRollback,omitempty"`
+}
+
+// AutoRollbackSpec configures the SLO / error-budget gate applied to a new version
+// during its rollout. The operator queries Istio request metrics for the new build
+// tag over a trailing window; if the version burns its error budget (or breaches the
+// latency objective), it is quarantined and traffic reverts to the last healthy tag —
+// the same machinery the crash-loop path uses.
+type AutoRollbackSpec struct {
+	// Mode selects what the SLO gate does when a new version breaches its objective:
+	//   monitor (default) — evaluate, emit an SLOBreach event + metric, but never roll
+	//                       back. A dry run: use it to build confidence in the signal.
+	//   enforce           — evaluate and roll back the breaching version.
+	//   off               — skip the SLO gate entirely.
+	// This field does not affect crash-loop rollback, which is always enabled.
+	// +kubebuilder:validation:Enum=off;monitor;enforce
+	Mode string `json:"mode,omitempty"`
+
+	// SLO is the success-rate objective as a percentage, e.g. "99" or "99.5". The error
+	// budget is (100 - SLO): a new version whose 5xx ratio over Window exceeds that
+	// budget is breaching. Default "99".
+	SLO string `json:"slo,omitempty"`
+
+	// Window is the trailing evaluation window (a Prometheus duration, e.g. 2m).
+	// This is a rollback GATE, not a smoothing window — a longer window means a bad
+	// version serves errors for longer before it is caught. Default 2m; 1m is the
+	// floor (rate() needs several scrapes to be stable). Raise it only for very
+	// low-traffic or spiky services.
+	Window string `json:"window,omitempty"`
+
+	// MinRequests is the volume guard: the new version must have served at least this
+	// many requests within Window before the operator will judge it. Below the
+	// threshold there is not enough data and no rollback can fire — this, not a longer
+	// Window, is how low-traffic services are protected from false positives.
+	// Default 50 (mirrors the outlier-detection request-volume threshold).
+	MinRequests *int32 `json:"minRequests,omitempty"`
+
+	// LatencyP99Ms adds a latency objective in milliseconds: a new version whose p99
+	// request duration over Window exceeds this is breaching, even if its error rate is
+	// clean. Omit to gate on error rate alone (the default).
+	LatencyP99Ms *int32 `json:"latencyP99Ms,omitempty"`
 }
 
 // RateLimitSpec configures rate limiting for the BirService workload.

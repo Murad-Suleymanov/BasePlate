@@ -44,6 +44,19 @@ var (
 		},
 		[]string{"status"},
 	)
+
+	// sloBreachTotal counts SLO breach OBSERVATIONS, not rollbacks: a rollout under
+	// observation is polled every requeueRollout, so a breaching version increments this
+	// on each poll until it is quarantined (mode=enforce, one or two polls) or its
+	// observation window ends (mode=monitor). Use it to see which services breach and how
+	// often; the AutoRollback/SLOBreach events are the per-incident record.
+	sloBreachTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "easydeploy_slo_breach_total",
+			Help: "SLO breach observations during rollouts, by namespace, service and autoRollback mode.",
+		},
+		[]string{"namespace", "service", "mode"},
+	)
 )
 
 func registerControllerMetrics() {
@@ -53,6 +66,7 @@ func registerControllerMetrics() {
 			reconcileDuration,
 			reconcileInflight,
 			buildStatusTotal,
+			sloBreachTotal,
 		)
 
 		// Pre-create common label combinations so metrics are visible
