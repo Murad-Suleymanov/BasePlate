@@ -449,6 +449,25 @@ crd:
         primary:
           type: boolean
           description: "Whether this instance owns the pool's Service and HTTPRoutes. Non-primary members only contribute pods."
+        weighted:
+          type: boolean
+          description: "Pool splits traffic by weight — each member gets its own Service instead of joining the shared pool Service. Set by the chart on every member when any member declares a weight."
+        backends:
+          type: array
+          description: "Weighted split across the pool's members, as percentages summing to 100. Set only on the primary. A member holds its share regardless of pod count."
+          items:
+            type: object
+            required: [name, weight]
+            properties:
+              name:
+                type: string
+                description: "BirService (instance) name receiving this share; its Service is <name>-svc."
+              weight:
+                type: integer
+                format: int32
+                minimum: 0
+                maximum: 100
+                description: "Percent of the pool's traffic."
         entries:
           type: array
           description: "Named HTTP front doors (one HTTPRoute each). Set only on the primary."
