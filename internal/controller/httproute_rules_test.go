@@ -69,7 +69,7 @@ func TestBuildHTTPRouteRules_WeightedPool(t *testing.T) {
 		t.Fatalf("want 1 rule, got %d", len(rules))
 	}
 	rule := asMap(t, rules[0])
-	if got, want := backendNames(t, rule), []string{"app-main-svc", "app-testing-svc"}; !reflect.DeepEqual(got, want) {
+	if got, want := backendNames(t, rule), []string{"app-main-inst-svc", "app-testing-inst-svc"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("backends = %v, want %v", got, want)
 	}
 	refs := rule["backendRefs"].([]interface{})
@@ -86,8 +86,8 @@ func TestBuildHTTPRouteRules_WeightedPool(t *testing.T) {
 func TestBuildHTTPRouteRules_WeightedPoolPartial(t *testing.T) {
 	backends := []deployv1alpha1.RouteBackend{{Name: "app-main", Weight: 95}}
 	rule := asMap(t, buildHTTPRouteRules("app-main-svc", 8080, "", 0, "", backends)[0])
-	if got := backendNames(t, rule); len(got) != 1 || got[0] != "app-main-svc" {
-		t.Errorf("want only [app-main-svc], got %v", got)
+	if got := backendNames(t, rule); len(got) != 1 || got[0] != "app-main-inst-svc" {
+		t.Errorf("want only [app-main-inst-svc], got %v", got)
 	}
 }
 

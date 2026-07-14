@@ -106,14 +106,19 @@ testing:
   imageTag: abc1234
 ```
 
-Each member gets its own Service (`<service>-<instance>-svc`) and the pool's HTTPRoute splits traffic across them by weight. `weight` is a share of the **traffic**, not of the capacity: scaling `testing` to 4 pods changes how comfortably it serves its 5%, never the size of that 5%.
+Each member gets a Service of its own (`<service>-<instance>-inst-svc`) holding just its pods, and the split is applied in **both directions**:
+
+- **From outside** — the pool's HTTPRoute on the Gateway splits arriving traffic across the members.
+- **From inside the mesh** — a second HTTPRoute is attached to the pool's Service (`<service>-<route>-svc`), the address other services dial. The namespace's waypoint applies it, so an in-cluster caller gets the same split. This needs a waypoint, i.e. `traffic:` on the instances; without one the pool still splits at the Gateway, but in-mesh callers fall back to pod-count spreading.
+
+`weight` is a share of the **traffic**, not of the capacity: scaling `testing` to 4 pods changes how comfortably it serves its 5%, never the size of that 5%.
 
 Rules:
 
 - **All-or-nothing.** If one instance on a route declares a `weight`, every instance on that route must, and they must **sum to 100** — so a weight reads literally as a percent. A partial set is rejected rather than defaulted, because a default would quietly hand the undeclared instance whatever is left over.
 - `weight` needs a `route`: a standalone instance already takes 100% of its own traffic.
 - Cannot be combined with `canary:` on the same instance — both split the same route, and nesting them does not divide into whole percentages. Weigh **standing** instances; canary a **single** one.
-- Weights are applied at the **Gateway** (external traffic). A caller inside the mesh that dials a member's Service directly bypasses the split.
+- Callers should dial the pool Service (`<service>-<route>-svc`). The per-member `-inst-svc` Services are the split's destinations, not addresses: dialing one directly reaches that member alone, bypassing the weights.
 - An HPA on a weighted instance now sees only that instance's share of the RPS — expect `testing` to sit near `minReplicas`.
 
 ## Editor Setup

@@ -408,81 +408,48 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
-	// Service topology follows whether the pool weighs its members:
-	//
-	//   unweighted → ONE shared Service, owned by the primary, selecting the route-group
-	//                label. Every member's pods sit behind it, so each member's share of
-	//                the traffic is just its share of the pod count — which the HPA moves
-	//                around at will.
-	//   weighted   → one Service per member, each selecting only its own pods. A weight
-	//                can only be attached to a backendRef, so the members have to be
-	//                separately addressable before the primary can split traffic by hand.
-	//
-	// svcName is what the HTTPRoute and ServiceMonitor reference — non-primary members of
-	// an unweighted pool reference the pool's Service without owning it.
+	// The pool's Service is the address every caller dials, in or out of the mesh, and the
+	// primary owns it whether or not the pool is weighted. It always selects the route-group
+	// label, i.e. every member's pods: a weighted pool routes through it rather than to it,
+	// and a caller that somehow reaches it unrouted still lands on a healthy pod.
 	weighted := routeIsWeighted(bs)
-	svcName := poolServiceName(bs)
+	poolSvc := poolServiceName(bs)
+	if routeIsPrimary(bs) {
+		if err := r.reconcilePoolService(ctx, bs, poolSvc, labels,
+			map[string]string{labelRouteGroup: routeGroup(bs)}, port, containerPort); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	// A weight can only be attached to a backendRef and a backendRef names a Service, so a
+	// weighted pool additionally gives every member a Service of its own, selecting nothing
+	// but that member's pods. These are the split's destinations; nobody dials them directly.
+	memberSvc := memberServiceName(bs)
 	if weighted {
-		svcName = instanceServiceName(bs)
+		if err := r.reconcilePoolService(ctx, bs, memberSvc, labels,
+			mergeStringMap(map[string]string{}, labels), port, containerPort); err != nil {
+			return ctrl.Result{}, err
+		}
+	} else if err := r.deleteOwnedService(ctx, bs, memberSvc); err != nil {
+		// Weights were removed: drop the member Service so it stops selecting live pods.
+		return ctrl.Result{}, err
 	}
-	if weighted || routeIsPrimary(bs) {
-		if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-			svc := corev1.Service{}
-			svc.Name = svcName
-			svc.Namespace = bs.Namespace
 
-			_, err := controllerutil.CreateOrUpdate(ctx, r.Client, &svc, func() error {
-				svc.ObjectMeta.Labels = mergeStringMap(svc.ObjectMeta.Labels, labels)
-				// In Istio ambient mode, services need this label to route through the
-				// namespace's waypoint Pod for L7 features (HTTP routing, tracing, RBAC).
-				// Namespace-level use-waypoint label alone is not always honored by ztunnel
-				// for service-VIP traffic; service-level label is the authoritative signal.
-				// Toggle symmetrically with spec.traffic so removing traffic also removes the
-				// label (mergeStringMap only adds — explicit delete is required for removal).
-				if bsNeedsWaypoint(bs) {
-					if svc.ObjectMeta.Labels == nil {
-						svc.ObjectMeta.Labels = map[string]string{}
-					}
-					svc.ObjectMeta.Labels[labelUseWaypoint] = waypointName
-				} else {
-					delete(svc.ObjectMeta.Labels, labelUseWaypoint)
-				}
-
-				if weighted {
-					// This member's pods only. The weight on the primary's backendRef is what
-					// decides this instance's share, so the Service must not reach past itself
-					// into the rest of the pool — that would hand it a second, unweighted door.
-					svc.Spec.Selector = mergeStringMap(map[string]string{}, labels)
-				} else {
-					// Select on the route-group label so the pool spans every member's
-					// pods (main + testing + …), letting the LB pick any of them.
-					svc.Spec.Selector = map[string]string{labelRouteGroup: routeGroup(bs)}
-				}
-				svc.Spec.Type = corev1.ServiceTypeClusterIP
-				svc.Spec.Ports = []corev1.ServicePort{
-					{
-						Name:       "http",
-						Port:       port,
-						TargetPort: intstr.FromInt(int(containerPort)),
-						Protocol:   corev1.ProtocolTCP,
-					},
-				}
-
-				return ctrl.SetControllerReference(bs, &svc, r.Scheme)
-			})
-			return err
-		}); err != nil {
+	// An earlier build named member Services <name>-svc, which collides with the pool's own
+	// <group>-svc for the member named after its route. Any surviving one is unreferenced but
+	// still selects live pods, so a caller holding its ClusterIP keeps reaching that member
+	// unweighted. Reclaim the name — unless it IS the pool Service (standalone instances and
+	// route-named primaries resolve to it), which we just created.
+	if legacy := fmt.Sprintf("%s-svc", bs.Name); legacy != poolSvc {
+		if err := r.deleteOwnedService(ctx, bs, legacy); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
 
-	// Adding or removing weights flips the topology, which strands the Service from the
-	// other shape: it keeps its ClusterIP and keeps selecting live pods, so any caller
-	// still holding it goes on bypassing the split. Delete the one we no longer want.
-	if stale := otherTopologyService(bs, weighted); stale != "" && stale != svcName {
-		if err := r.deleteOwnedService(ctx, bs, stale); err != nil {
-			return ctrl.Result{}, err
-		}
+	// Scrape this instance's own pods when it has a Service for them; otherwise the pool's.
+	svcName := poolSvc
+	if weighted {
+		svcName = memberSvc
 	}
 
 	if err := r.reconcileHPA(ctx, bs, depName, labels, minReplicas, maxReplicas); err != nil {
@@ -1656,14 +1623,18 @@ func poolServiceName(bs *deployv1alpha1.BirService) string {
 
 // backendServiceName is the Service fronting one pool member, named after its BirService.
 // The chart puts BirService names in route.backends; this is how they resolve to Services.
+//
+// The `-inst-` infix is what keeps this distinct from the pool's own <group>-svc. A pool's
+// group is <release>-<route> and a member is <release>-<instance>, so the member whose name
+// matches its route — the common case, `main` on route `main` — would otherwise resolve to
+// the pool's Service and make it both the address and one of the destinations behind it.
 func backendServiceName(instance string) string {
-	return fmt.Sprintf("%s-svc", instance)
+	return fmt.Sprintf("%s-inst-svc", instance)
 }
 
-// instanceServiceName is the Service that fronts ONE instance's pods: <name>-svc. Weighted
-// pools use these — a weight can only be applied to a backendRef, so each member has to be
-// separately addressable. (Canary Services are <name>-canary-svc, so they never collide.)
-func instanceServiceName(bs *deployv1alpha1.BirService) string {
+// memberServiceName is the Service selecting ONE member's pods, used only by weighted pools.
+// (Canary Services are <name>-canary-svc, so they never collide with these.)
+func memberServiceName(bs *deployv1alpha1.BirService) string {
 	return backendServiceName(bs.Name)
 }
 
@@ -1673,18 +1644,52 @@ func routeIsWeighted(bs *deployv1alpha1.BirService) bool {
 	return bs.Spec.Route != nil && bs.Spec.Route.Weighted
 }
 
-// otherTopologyService names the Service this instance would own under the OPPOSITE
-// weighting — the one left stranded when weights are added or removed. A non-primary
-// member never owns a pool Service, so the only thing it can strand is its per-instance
-// one; returning "" for it keeps a member from deleting the primary's Service.
-func otherTopologyService(bs *deployv1alpha1.BirService, weighted bool) string {
-	if !weighted {
-		return instanceServiceName(bs)
-	}
-	if routeIsPrimary(bs) {
-		return poolServiceName(bs)
-	}
-	return ""
+// reconcilePoolService creates or updates one of this instance's Services — the pool's
+// shared address or a weighted member's own — differing only in what they select.
+func (r *BirServiceReconciler) reconcilePoolService(
+	ctx context.Context,
+	bs *deployv1alpha1.BirService,
+	name string,
+	labels, selector map[string]string,
+	port, containerPort int32,
+) error {
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		svc := corev1.Service{}
+		svc.Name = name
+		svc.Namespace = bs.Namespace
+
+		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, &svc, func() error {
+			svc.ObjectMeta.Labels = mergeStringMap(svc.ObjectMeta.Labels, labels)
+			// In Istio ambient mode, services need this label to route through the
+			// namespace's waypoint Pod for L7 features (HTTP routing, tracing, RBAC).
+			// Namespace-level use-waypoint label alone is not always honored by ztunnel
+			// for service-VIP traffic; service-level label is the authoritative signal.
+			// Toggle symmetrically with spec.traffic so removing traffic also removes the
+			// label (mergeStringMap only adds — explicit delete is required for removal).
+			if bsNeedsWaypoint(bs) {
+				if svc.ObjectMeta.Labels == nil {
+					svc.ObjectMeta.Labels = map[string]string{}
+				}
+				svc.ObjectMeta.Labels[labelUseWaypoint] = waypointName
+			} else {
+				delete(svc.ObjectMeta.Labels, labelUseWaypoint)
+			}
+
+			svc.Spec.Selector = selector
+			svc.Spec.Type = corev1.ServiceTypeClusterIP
+			svc.Spec.Ports = []corev1.ServicePort{
+				{
+					Name:       "http",
+					Port:       port,
+					TargetPort: intstr.FromInt(int(containerPort)),
+					Protocol:   corev1.ProtocolTCP,
+				},
+			}
+
+			return ctrl.SetControllerReference(bs, &svc, r.Scheme)
+		})
+		return err
+	})
 }
 
 // resolveRouteBackends returns the weighted backends this instance's HTTPRoute should
@@ -2302,6 +2307,29 @@ func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deplo
 				"hostnames": toInterfaceSlice(hostnames),
 				"rules":     buildHTTPRouteRules(svcName, svcPort, canarySvcName, canaryWeight, e.Timeout, backends),
 			}
+		}
+	}
+
+	// The routes above hang off the Gateway, so they only shape traffic that ARRIVES through
+	// it. A caller inside the mesh dials the pool's Service directly — cluster-local, no
+	// Gateway in the path — and would get none of the split: the pool Service selects every
+	// member's pods, so in-mesh traffic falls back to spreading across them by pod count,
+	// which is the very thing the weights exist to stop.
+	//
+	// Attaching a second route to the Service itself (parentRef kind: Service — the mesh half
+	// of Gateway API) puts the same split in front of in-mesh callers, applied by the
+	// namespace's waypoint. Without a waypoint there is no L7 hop to apply it, so this needs
+	// one; a weighted pool with no spec.traffic still splits at the Gateway only.
+	if routeIsPrimary(bs) && routeIsWeighted(bs) && bsNeedsWaypoint(bs) && len(backends) > 0 {
+		desired[fmt.Sprintf("%s-mesh-route", bs.Name)] = map[string]interface{}{
+			"parentRefs": []interface{}{
+				map[string]interface{}{
+					"group": "",
+					"kind":  "Service",
+					"name":  poolServiceName(bs),
+				},
+			},
+			"rules": buildHTTPRouteRules(svcName, svcPort, canarySvcName, canaryWeight, "", backends),
 		}
 	}
 
