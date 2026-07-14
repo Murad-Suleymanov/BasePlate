@@ -67,12 +67,25 @@ jobs:
           set -euo pipefail
           if git diff --quiet -- charts/easy-deploy-platform/values.yaml; then
             echo "No BasePlate chart changes"
-          else
-            git add charts/easy-deploy-platform/values.yaml
-            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-              commit -m "chore(operator): bump image to ${GITHUB_SHA}"
-            git push
+            exit 0
           fi
+          git add charts/easy-deploy-platform/values.yaml
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "chore(operator): bump image to ${GITHUB_SHA}"
+          # The checkout is pinned to the SHA that triggered this run, so any commit landing
+          # on main while the image built makes this push a non-fast-forward. Rebase and retry
+          # instead of failing: dropping the bump would leave the cluster on the old operator
+          # while main claims the new one, and the failure is silent until something misbehaves.
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              exit 0
+            fi
+            echo "push rejected (attempt ${attempt}) — rebasing onto origin/main"
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              pull --rebase origin main
+          done
+          echo "could not push the image bump after 5 attempts"
+          exit 1
 
       # ArgoCD bu fayllardan oxuyur — token: repo Settings → Secrets → BASEPLATE_INFRA_TOKEN (PAT: BasePlate-Infra contents:write)
       - name: Checkout BasePlate-Infra
@@ -110,4 +123,13 @@ jobs:
             exit 0
           fi
           git commit -m "chore(operator): bump image to ${GITHUB_SHA}"
-          git push
+          # Same race as the chart bump, and this is the one ArgoCD actually reads.
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              exit 0
+            fi
+            echo "push rejected (attempt ${attempt}) — rebasing onto origin/main"
+            git pull --rebase origin main
+          done
+          echo "could not push the Infra image bump after 5 attempts"
+          exit 1
