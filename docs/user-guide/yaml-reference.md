@@ -74,71 +74,47 @@ Shared service-level fields (`repo`, `image`, `tag`, …) come from `service.yam
 
 **Shape detection is automatic**: if the root has any operational key (`hpa`, `resources`, `traffic`, …), it's single-instance; otherwise it's multi-instance (and every map at the root becomes an instance).
 
-#### Inherit from a sibling instance (`inheritFrom`)
+#### Share one hostname across instances (`route`)
 
-When two instances are nearly identical, don't duplicate the whole block. An instance can inherit the **full** config of a sibling with `inheritFrom: <name>` and override only the fields it declares. The override is a **deep merge**, so you can change a single nested leaf:
-
-```yaml
-main:
-  hpa:
-    minReplicas: 1
-    maxReplicas: 2
-  resources: {...}
-  traffic: {...}
-  readinessProbe: {path: /Health}
-
-slave:
-  inheritFrom: main      # copy everything from main…
-  hpa:
-    maxReplicas: 4       # …then override just this one leaf (minReplicas stays 1)
-```
-
-Rules:
-
-- The target must be a defined sibling instance in the **same** file.
-- No chains and no self-reference: the target must not itself use `inheritFrom`.
-- `inheritFrom` is resolution metadata only — it never appears in the rendered BirService spec.
-- Service-level fields from `service.yaml` (`repo`, `image`, …) still apply on top, with the instance/its parent winning on conflict.
-
-#### Share one hostname across instances (`route.shareWith`)
-
-By default each instance gets its **own** hostname (`<service>-<instance>-<env>.<baseDomain>`) and HTTPRoute. To put several instances behind **one** DNS name, a "child" instance joins a "parent" instance's route with `route.shareWith` and scopes itself with `route.pathPrefix`:
+Instances that name the same `route` form a **pool**: they share one hostname and one Service, and every member's pods sit behind it.
 
 ```yaml
 main:
-  hpa: {minReplicas: 1, maxReplicas: 2}
-  resources: {...}
-  traffic: {...}
+  route: main
+  hpa: {minReplicas: 1, maxReplicas: 3}
 
 testing:
-  inheritFrom: main        # same image/config as main
-  route:
-    shareWith: main        # join main's hostname instead of creating its own
-    pathPrefix: /testing    # only /testing reaches testing; everything else stays on main
+  route: main            # same pool → same hostname as main
+  imageTag: abc1234      # pinned to its own build
 ```
 
-This renders **one** HTTPRoute on the host `<service>-main-<env>.<baseDomain>` with two rules:
+By default the pool has **no notion of shares** — the load balancer picks any pod, so an instance's slice of the traffic is just its slice of the pod count. That is rarely what you want once the instances differ: with `main` at 1 pod and `testing` at 1 pod, `testing` serves **half** the requests, and every time the HPA scales `main` the split silently moves.
 
+#### Fix each instance's share (`weight`)
+
+Give the instances weights and the split stops depending on pod count:
+
+```yaml
+main:
+  route: main
+  weight: 95
+  hpa: {minReplicas: 1, maxReplicas: 10}
+
+testing:
+  route: main
+  weight: 5              # 5% of requests, whatever either side scales to
+  imageTag: abc1234
 ```
-/testing  → <service>-testing-svc     # the child
-/         → <service>-main-svc        # the parent (catch-all)
-```
 
-Gateway API matches the **longest** path prefix first, so `/testing` wins over `/` regardless of order, and `main` keeps all other traffic (none is stolen).
-
-Variants:
-
-- **Weighted split** — omit `pathPrefix` and set `weight` instead. The child becomes a weighted backend on the parent's `/` rule (e.g. `weight: 10` → 10% of all traffic to the child). Use for blue/green or gradual cutover.
-- Multiple children may share the same parent (each adds its own rule/backend).
+Each member gets its own Service (`<service>-<instance>-svc`) and the pool's HTTPRoute splits traffic across them by weight. `weight` is a share of the **traffic**, not of the capacity: scaling `testing` to 4 pods changes how comfortably it serves its 5%, never the size of that 5%.
 
 Rules:
 
-- `shareWith` must name a defined sibling instance in the **same** file.
-- No chains and no self-reference: the parent must not itself use `route.shareWith`.
-- A child must **not** set its own `hostname` — the host comes from the parent.
-- `pathPrefix`, when set, must start with `/`.
-- The child still gets its own Deployment + Service; it just has **no HTTPRoute of its own** (reachable only through the shared host). Children share the parent's Service port (set it once on the parent — `inheritFrom` keeps them in sync).
-- This is distinct from `canary:` (a shadow variant of a single service); `route.shareWith` joins two **independent, standing** instances under one host.
+- **All-or-nothing.** If one instance on a route declares a `weight`, every instance on that route must, and they must **sum to 100** — so a weight reads literally as a percent. A partial set is rejected rather than defaulted, because a default would quietly hand the undeclared instance whatever is left over.
+- `weight` needs a `route`: a standalone instance already takes 100% of its own traffic.
+- Cannot be combined with `canary:` on the same instance — both split the same route, and nesting them does not divide into whole percentages. Weigh **standing** instances; canary a **single** one.
+- Weights are applied at the **Gateway** (external traffic). A caller inside the mesh that dials a member's Service directly bypasses the split.
+- An HPA on a weighted instance now sees only that instance's share of the RPS — expect `testing` to sit near `minReplicas`.
 
 ## Editor Setup
 

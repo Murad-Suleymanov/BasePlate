@@ -164,11 +164,19 @@ direct `$var = ...` assignments inside `range` don't reliably persist outside.
 {{- end -}}
 
 {{/*
-Resolve a tenant's route name(s) into the CR route object {group, primary, entries}.
+Resolve a tenant's route name(s) into the CR route object
+{group, primary, weighted, backends, entries}.
 Args (dict): rnames (list of route names), instance (this instance's key),
 primaryOf (route name -> primary instance), catalog (merged route policies),
-release (Helm release name). The primary route is the first name; group is
-<release>-<primaryRoute>. Only the primary emits entries (the HTTPRoutes).
+release (Helm release name), membersOf (pool -> instance names),
+weightOf (instance -> weight), weightedPools (set of pools that declared weights).
+The primary route is the first name; group is <release>-<primaryRoute>. Only the
+primary emits entries (the HTTPRoutes) and backends (the weighted split).
+
+Backends name the BirService of each member (<release>-<instance>); the operator derives
+that member's Service from the name. Members iterate in the order they were collected from
+the sorted values map, so the list is stable across renders (an unstable order would show
+up as a permanent ArgoCD diff).
 */}}
 {{- define "birservice.resolveRoute" -}}
 {{- $rnames := .rnames -}}
@@ -181,13 +189,24 @@ release (Helm release name). The primary route is the first name; group is
 {{- end -}}
 {{- $primaryRoute := index $rnames 0 | toString -}}
 {{- $isPrimary := eq (get .primaryOf $primaryRoute) .instance -}}
+{{- $isWeighted := hasKey (.weightedPools | default dict) $primaryRoute -}}
 group: {{ printf "%s-%s" .release $primaryRoute }}
-{{- /* Emit `primary` only when true. The CR field is `bool omitempty`, so a stored
-       `false` serializes back as absent — emitting `primary: false` here would make
+{{- /* Emit `primary`/`weighted` only when true. Both CR fields are `bool omitempty`, so
+       a stored `false` serializes back as absent — emitting `false` here would make
        ArgoCD diff desired(false) vs live(absent) forever (perpetual OutOfSync). The
-       operator reads absent as non-primary, so omitting it is equivalent and clean. */ -}}
+       operator reads absent as false, so omitting is equivalent and clean. */ -}}
+{{- if $isWeighted }}
+weighted: true
+{{- end }}
 {{- if $isPrimary }}
 primary: true
+{{- if $isWeighted }}
+backends:
+{{- range $m := index $.membersOf $primaryRoute }}
+  - name: {{ printf "%s-%s" $.release $m }}
+    weight: {{ index $.weightOf $m }}
+{{- end }}
+{{- end }}
 entries:
 {{- range $rn := $rnames }}
 {{- $rn = $rn | toString }}

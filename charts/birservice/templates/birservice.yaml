@@ -26,8 +26,14 @@
 {{- /* ── Primary designation ──────────────────────────────────────────────────
        For each route name, pick the instance that owns the pool's Service + routes:
        the instance whose name equals the route name, else the first (sorted) one
-       referencing it. Map keys iterate sorted, so this is deterministic. */ -}}
+       referencing it. Map keys iterate sorted, so this is deterministic.
+
+       The same pass collects pool membership and declared weights. A pool is the
+       set of instances sharing a FIRST route name (that name is the pool's group),
+       so membership keys off `index $rnames 0`. */ -}}
 {{- $primaryOf := dict -}}
+{{- $membersOf := dict -}}
+{{- $weightOf := dict -}}
 {{- range $iname, $icfg := .Values -}}
 {{- if and (not (has $iname $knownKeys)) (not (hasPrefix "_" $iname)) (kindIs "map" $icfg) -}}
   {{- $rnames := list -}}
@@ -38,38 +44,67 @@
       {{- $_ := set $primaryOf $rn $iname -}}
     {{- end -}}
   {{- end -}}
+  {{- if gt (len $rnames) 0 -}}
+    {{- $pool := index $rnames 0 | toString -}}
+    {{- $_ := set $membersOf $pool (append (get $membersOf $pool | default list) $iname) -}}
+    {{- if hasKey $icfg "weight" -}}
+      {{- /* Both weight and canary want to own the route's backend list, and nesting them
+             does not divide cleanly (95% × 10% canary = 9.5%, and backend weights are whole
+             numbers). Reject the combination rather than silently dropping one of them. */ -}}
+      {{- if $icfg.canary -}}
+        {{- fail (printf "instance %q: weight and canary cannot be used together — both split the same route. Weigh standing instances, or canary a single one." $iname) -}}
+      {{- end -}}
+      {{- $_ := set $weightOf $iname ($icfg.weight | int) -}}
+    {{- end -}}
+  {{- else if hasKey $icfg "weight" -}}
+    {{- fail (printf "instance %q: weight needs a route — weights split traffic between instances that share one route, so a standalone instance has nothing to split with" $iname) -}}
+  {{- end -}}
 {{- end -}}
+{{- end -}}
+{{- /* ── Weighted pools ────────────────────────────────────────────────────────
+       A pool is weighted only if a member declares `weight`. Then EVERY member must
+       declare one and they must sum to 100, so a weight reads literally as a percent
+       of the pool's traffic. Partial weights are rejected rather than defaulted: a
+       silent default here would quietly hand the undeclared instance whatever is left,
+       which is exactly the surprise weights exist to prevent.
+
+       Accumulate through a dict — `range` opens a new variable scope, so plain `$x =`
+       assignments inside it do not reliably survive the loop. */ -}}
+{{- $weightedPools := dict -}}
+{{- range $pool, $members := $membersOf -}}
+  {{- $acc := dict "declared" list "missing" list "sum" 0 -}}
+  {{- range $m := $members -}}
+    {{- if hasKey $weightOf $m -}}
+      {{- $_ := set $acc "declared" (append $acc.declared $m) -}}
+      {{- $_ := set $acc "sum" (add $acc.sum (get $weightOf $m)) -}}
+    {{- else -}}
+      {{- $_ := set $acc "missing" (append $acc.missing $m) -}}
+    {{- end -}}
+  {{- end -}}
+  {{- if gt (len $acc.declared) 0 -}}
+    {{- if gt (len $acc.missing) 0 -}}
+      {{- fail (printf "route %q: weight is all-or-nothing — %v declare a weight, %v do not. Give every instance on this route a weight (they must sum to 100)." $pool $acc.declared $acc.missing) -}}
+    {{- end -}}
+    {{- if ne ($acc.sum | int) 100 -}}
+      {{- fail (printf "route %q: instance weights must sum to 100, got %d (%v)" $pool ($acc.sum | int) $members) -}}
+    {{- end -}}
+    {{- $_ := set $weightedPools $pool true -}}
+  {{- end -}}
 {{- end -}}
 {{- range $instanceName, $instanceCfg := .Values -}}
 {{- if and (not (has $instanceName $knownKeys)) (not (hasPrefix "_" $instanceName)) (kindIs "map" $instanceCfg) }}
-{{- /* Resolve `inheritFrom`: deep-merge this instance ON TOP OF the named sibling
-       so it overrides only the fields it declares. Single-level only. */ -}}
-{{- $base := dict -}}
-{{- if hasKey $instanceCfg "inheritFrom" -}}
-  {{- $parentName := $instanceCfg.inheritFrom | toString -}}
-  {{- if eq $parentName $instanceName -}}
-    {{- fail (printf "instance %q: inheritFrom cannot reference itself" $instanceName) -}}
-  {{- end -}}
-  {{- $parentCfg := index $.Values $parentName -}}
-  {{- if not (kindIs "map" $parentCfg) -}}
-    {{- fail (printf "instance %q: inheritFrom: %q is not a defined instance" $instanceName $parentName) -}}
-  {{- end -}}
-  {{- if hasKey $parentCfg "inheritFrom" -}}
-    {{- fail (printf "instance %q: inheritFrom target %q must not itself use inheritFrom (no chains)" $instanceName $parentName) -}}
-  {{- end -}}
-  {{- $base = deepCopy $parentCfg -}}
-{{- end -}}
-{{- $effective := mergeOverwrite $base (deepCopy $instanceCfg) -}}
-{{- $_ := unset $effective "inheritFrom" -}}
-{{- $merged := merge $effective $shared }}
-{{- /* Resolve routing: tenant route/routes (names) → CR route {group, primary, entries}.
-       Drop the raw tenant fields so only the resolved object reaches the operator. */ -}}
+{{- $merged := merge (deepCopy $instanceCfg) $shared }}
+{{- /* Resolve routing: tenant route/routes (names) → CR route {group, primary, weighted,
+       backends, entries}. Drop the raw tenant fields so only the resolved object reaches
+       the operator; `weight` is tenant-side too — it is aggregated onto the primary's
+       backends list and never rendered on the instance itself. */ -}}
 {{- $_ := unset $merged "route" -}}
 {{- $_ := unset $merged "routes" -}}
+{{- $_ := unset $merged "weight" -}}
 {{- $rnames := list -}}
 {{- if $instanceCfg.route -}}{{- $rnames = list ($instanceCfg.route | toString) -}}{{- else if $instanceCfg.routes -}}{{- $rnames = $instanceCfg.routes -}}{{- end -}}
 {{- if gt (len $rnames) 0 -}}
-  {{- $_ := set $merged "route" (include "birservice.resolveRoute" (dict "rnames" $rnames "instance" $instanceName "primaryOf" $primaryOf "catalog" $catalog "release" $.Release.Name) | fromYaml) -}}
+  {{- $_ := set $merged "route" (include "birservice.resolveRoute" (dict "rnames" $rnames "instance" $instanceName "primaryOf" $primaryOf "catalog" $catalog "release" $.Release.Name "membersOf" $membersOf "weightOf" $weightOf "weightedPools" $weightedPools) | fromYaml) -}}
 {{- end }}
 ---
 apiVersion: deploy.easydeploy.io/v1alpha1
@@ -90,7 +125,11 @@ spec:
 {{- end -}}
 
 {{- else -}}
-{{- /* Single-instance: always its own primary. */ -}}
+{{- /* Single-instance: always its own primary, and the only member of its pool —
+       so there is no second backend to weigh against. */ -}}
+{{- if hasKey .Values "weight" -}}
+  {{- fail "weight needs two or more instances sharing a route — a single-instance service already takes 100% of its traffic" -}}
+{{- end -}}
 {{- $vals := deepCopy .Values -}}
 {{- $_ := unset $vals "route" -}}
 {{- $_ := unset $vals "routes" -}}
@@ -99,7 +138,7 @@ spec:
 {{- if .Values.route -}}{{- $rnames = list (.Values.route | toString) -}}{{- else if .Values.routes -}}{{- $rnames = .Values.routes -}}{{- end -}}
 {{- if gt (len $rnames) 0 -}}
   {{- $primaryRoute := index $rnames 0 | toString -}}
-  {{- $_ := set $vals "route" (include "birservice.resolveRoute" (dict "rnames" $rnames "instance" $primaryRoute "primaryOf" (dict $primaryRoute $primaryRoute) "catalog" $catalog "release" $name) | fromYaml) -}}
+  {{- $_ := set $vals "route" (include "birservice.resolveRoute" (dict "rnames" $rnames "instance" $primaryRoute "primaryOf" (dict $primaryRoute $primaryRoute) "catalog" $catalog "release" $name "membersOf" dict "weightOf" dict "weightedPools" dict) | fromYaml) -}}
 {{- end }}
 ---
 apiVersion: deploy.easydeploy.io/v1alpha1

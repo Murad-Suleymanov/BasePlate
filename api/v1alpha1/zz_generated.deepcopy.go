@@ -100,6 +100,11 @@ func (in *RouteSpec) DeepCopyInto(out *RouteSpec) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.Backends != nil {
+		in, out := &in.Backends, &out.Backends
+		*out = make([]RouteBackend, len(*in))
+		copy(*out, *in)
+	}
 }
 
 func (in *RouteSpec) DeepCopy() *RouteSpec {
@@ -107,6 +112,19 @@ func (in *RouteSpec) DeepCopy() *RouteSpec {
 		return nil
 	}
 	out := new(RouteSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *RouteBackend) DeepCopyInto(out *RouteBackend) {
+	*out = *in
+}
+
+func (in *RouteBackend) DeepCopy() *RouteBackend {
+	if in == nil {
+		return nil
+	}
+	out := new(RouteBackend)
 	in.DeepCopyInto(out)
 	return out
 }

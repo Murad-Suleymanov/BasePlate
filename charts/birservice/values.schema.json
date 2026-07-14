@@ -10,9 +10,9 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "inheritFrom":    { "type": "string", "minLength": 1, "description": "Inherit the full config of the named sibling instance (e.g. 'main'); fields declared here override the inherited ones (deep merge). The target instance must not itself use inheritFrom (no chains)." },
         "route":          { "$ref": "#/properties/route" },
         "routes":         { "$ref": "#/properties/routes" },
+        "weight":         { "$ref": "#/properties/weight" },
         "image":          { "$ref": "#/properties/image" },
         "repo":           { "$ref": "#/properties/repo" },
         "tag":            { "$ref": "#/properties/tag" },
@@ -59,6 +59,12 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
       "description": "Several route names for one pool: each becomes its own HTTPRoute (own hostname/timeout) pointing at the same Service. The first is the pool's primary route."
+    },
+    "weight": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Percent of the route's traffic this instance takes, held regardless of pod count (an HPA changes how comfortably it serves the share, never the size of it). Without weights, a pool splits traffic by pod count instead. All-or-nothing: if one instance on a route declares a weight, every instance on it must, and they must sum to 100. Cannot be combined with canary."
     },
     "environment": {
       "type": "string",

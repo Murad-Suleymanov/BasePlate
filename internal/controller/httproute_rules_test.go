@@ -1,7 +1,10 @@
 package controller
 
 import (
+	"reflect"
 	"testing"
+
+	deployv1alpha1 "easy-deploy/api/v1alpha1"
 )
 
 func int32p(v int32) *int32 { return &v }
@@ -40,7 +43,7 @@ func pathValue(t *testing.T, rule map[string]interface{}) string {
 
 // Standalone service: single rule, no explicit match, just its own backend.
 func TestBuildHTTPRouteRules_Standalone(t *testing.T) {
-	rules := buildHTTPRouteRules("app-svc", 8080, "", 0, "")
+	rules := buildHTTPRouteRules("app-svc", 8080, "", 0, "", nil)
 	if len(rules) != 1 {
 		t.Fatalf("want 1 rule, got %d", len(rules))
 	}
@@ -53,9 +56,59 @@ func TestBuildHTTPRouteRules_Standalone(t *testing.T) {
 	}
 }
 
+// A weighted pool fans out to one backendRef per member, each pinned to its share. The
+// pool Service is NOT among them: routing through it would put the members back behind a
+// single unweighted door and hand the split back to the pod count.
+func TestBuildHTTPRouteRules_WeightedPool(t *testing.T) {
+	backends := []deployv1alpha1.RouteBackend{
+		{Name: "app-main", Weight: 95},
+		{Name: "app-testing", Weight: 5},
+	}
+	rules := buildHTTPRouteRules("app-main-svc", 8080, "", 0, "", backends)
+	if len(rules) != 1 {
+		t.Fatalf("want 1 rule, got %d", len(rules))
+	}
+	rule := asMap(t, rules[0])
+	if got, want := backendNames(t, rule), []string{"app-main-svc", "app-testing-svc"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("backends = %v, want %v", got, want)
+	}
+	refs := rule["backendRefs"].([]interface{})
+	if w := asMap(t, refs[0])["weight"].(int64); w != 95 {
+		t.Errorf("main weight = %d, want 95", w)
+	}
+	if w := asMap(t, refs[1])["weight"].(int64); w != 5 {
+		t.Errorf("testing weight = %d, want 5", w)
+	}
+}
+
+// Weights are relative, so a member whose Service isn't up yet can simply be left out: the
+// remaining members keep serving in their declared proportions instead of 5xx-ing its share.
+func TestBuildHTTPRouteRules_WeightedPoolPartial(t *testing.T) {
+	backends := []deployv1alpha1.RouteBackend{{Name: "app-main", Weight: 95}}
+	rule := asMap(t, buildHTTPRouteRules("app-main-svc", 8080, "", 0, "", backends)[0])
+	if got := backendNames(t, rule); len(got) != 1 || got[0] != "app-main-svc" {
+		t.Errorf("want only [app-main-svc], got %v", got)
+	}
+}
+
+// Weights win over canary: both want to own the backendRef list, and the chart already
+// rejects declaring them together, so the route must not silently emit the canary split.
+func TestBuildHTTPRouteRules_WeightsBeatCanary(t *testing.T) {
+	backends := []deployv1alpha1.RouteBackend{
+		{Name: "app-main", Weight: 95},
+		{Name: "app-testing", Weight: 5},
+	}
+	rule := asMap(t, buildHTTPRouteRules("app-main-svc", 8080, "app-main-canary-svc", 10, "", backends)[0])
+	for _, name := range backendNames(t, rule) {
+		if name == "app-main-canary-svc" {
+			t.Errorf("canary backend leaked into a weighted pool: %v", backendNames(t, rule))
+		}
+	}
+}
+
 // Canary still produces a single weighted rule (no regression).
 func TestBuildHTTPRouteRules_Canary(t *testing.T) {
-	rules := buildHTTPRouteRules("app-svc", 8080, "app-canary-svc", 10, "")
+	rules := buildHTTPRouteRules("app-svc", 8080, "app-canary-svc", 10, "", nil)
 	if len(rules) != 1 {
 		t.Fatalf("want 1 rule, got %d", len(rules))
 	}
@@ -71,7 +124,7 @@ func TestBuildHTTPRouteRules_Canary(t *testing.T) {
 
 // A route timeout is emitted as the Gateway API per-request timeout on the rule.
 func TestBuildHTTPRouteRules_Timeout(t *testing.T) {
-	rules := buildHTTPRouteRules("app-svc", 8080, "", 0, "15s")
+	rules := buildHTTPRouteRules("app-svc", 8080, "", 0, "15s", nil)
 	if len(rules) != 1 {
 		t.Fatalf("want 1 rule, got %d", len(rules))
 	}
@@ -85,7 +138,7 @@ func TestBuildHTTPRouteRules_Timeout(t *testing.T) {
 	}
 
 	// No timeout → no timeouts block.
-	plain := asMap(t, buildHTTPRouteRules("app-svc", 8080, "", 0, "")[0])
+	plain := asMap(t, buildHTTPRouteRules("app-svc", 8080, "", 0, "", nil)[0])
 	if _, has := plain["timeouts"]; has {
 		t.Errorf("no timeout should omit the timeouts block, got %#v", plain["timeouts"])
 	}

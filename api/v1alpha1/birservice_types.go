@@ -139,6 +139,28 @@ type RouteSpec struct {
 	// Entries are the named HTTP front doors for the pool — one HTTPRoute each, with
 	// its own hostname/timeout/retries. Set only on the Primary member.
 	Entries []RouteEntry `json:"entries,omitempty"`
+
+	// Weighted flips the pool from one shared Service to one Service per member, so the
+	// primary's HTTPRoute can split traffic by weight instead of letting it fall wherever
+	// the pod count happens to land. The chart sets it on every member of a pool in which
+	// any member declared a weight.
+	Weighted bool `json:"weighted,omitempty"`
+
+	// Backends is the weighted split across the pool's members, as percentages summing to
+	// 100. Set only on the Primary. Empty → the pool is unweighted: one shared Service and
+	// traffic spread over every member's pods by count.
+	Backends []RouteBackend `json:"backends,omitempty"`
+}
+
+// RouteBackend is one member of a weighted pool. Weight is a share of the pool's traffic,
+// not of its capacity: an instance holds its percentage no matter how many pods its HPA
+// runs, so scaling a member changes how comfortably it serves its share, never the size
+// of that share.
+type RouteBackend struct {
+	// Name is the BirService (instance) name whose Service receives this share.
+	Name string `json:"name"`
+	// Weight is the percent of the pool's traffic this member takes (0-100).
+	Weight int32 `json:"weight"`
 }
 
 // RouteEntry is one named HTTPRoute (front door) for a pool, resolved from the
