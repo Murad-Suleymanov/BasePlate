@@ -22,12 +22,12 @@ import (
 )
 
 const (
-	labelIstioInjection    = "istio-injection"
-	istioInjectDisabled    = "disabled"
-	labelDataplaneMode     = "istio.io/dataplane-mode"
-	labelUseWaypoint       = "istio.io/use-waypoint"
-	dataplaneAmbient       = "ambient"
-	waypointName           = "waypoint"
+	labelIstioInjection = "istio-injection"
+	istioInjectDisabled = "disabled"
+	labelDataplaneMode  = "istio.io/dataplane-mode"
+	labelUseWaypoint    = "istio.io/use-waypoint"
+	dataplaneAmbient    = "ambient"
+	waypointName        = "waypoint"
 	// labelRouteGroup marks the pool a pod belongs to. The pool's Service selects
 	// this label, so instances sharing a route name are load-balanced as one pool.
 	labelRouteGroup = "deploy.easydeploy.io/route-group"

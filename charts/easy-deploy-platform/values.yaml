@@ -423,6 +423,32 @@ crd:
         tag:
           type: string
           description: "Image tag override for canary (e.g. v2.0.0-rc1)."
+    rollout:
+      type: object
+      description: "How a NEW image takes traffic. Omit for immediate (default): one rolling update, no second Deployment, traffic follows pod count."
+      properties:
+        strategy:
+          type: string
+          enum: [immediate, progressive]
+          description: "immediate (default) = today's behaviour. progressive = ramp traffic onto the new version in weight steps, judging the SLO between them. In a pool only the PRIMARY member ramps (others own no HTTPRoute and deploy normally), and the ramp nests inside the pool split rather than replacing it."
+        steps:
+          type: array
+          items:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 99
+          description: "Traffic percentages the new version takes, in order, strictly increasing, 1-99. Default [5, 25, 50]. In a pool the percentage is of the MEMBER's share, not the pool's. 100 is invalid — the ramp ends by promoting the instance itself. Values above 50 are accepted but warn: the new revision cannot be sized to match the instance's per-pod load past that point, so it looks slow and a latency objective may abort a healthy version. Each step costs one stepDuration."
+        stepDuration:
+          type: string
+          description: "How long each step soaks before it is judged (Prometheus duration, e.g. 5m). Defaults to 2x traffic.autoRollback.window (4m with the default 2m window), floored at 2m. Set below the window and each step is judged partly on the previous step's traffic — allowed, but a RolloutWindowDiluted event is emitted."
+        maxStepDuration:
+          type: string
+          description: "How long a step may go unjudged (too little traffic, or Prometheus down) before the rollout stops and waits for a human instead of promoting. Default 10m."
+        analysis:
+          type: string
+          enum: [monitor, enforce]
+          description: "monitor = evaluate and report, the ramp continues regardless. enforce = a breach aborts the ramp and removes the new version. Defaults to traffic.autoRollback.mode."
     shutdown:
       type: object
       description: "Graceful termination tuning. terminationGracePeriodSeconds = preStopSleepSeconds + drainBufferSeconds."
@@ -507,3 +533,23 @@ crd:
     canaryImage:
       type: string
       description: "Full image URL of the active canary deployment."
+    rollout:
+      type: object
+      description: "Live state of a progressive ramp. Absent when no ramp is in flight."
+      properties:
+        phase:
+          type: string
+          description: "Progressing | Promoting | Held (unjudgeable, waiting on a human) | RolledBack. Override a ramp by hand with: kubectl annotate birservice <name> deploy.easydeploy.io/rollout-action=promote|abort (consumed once, then removed)."
+        tag:
+          type: string
+        step:
+          type: integer
+          format: int32
+        weight:
+          type: integer
+          format: int32
+          description: "Percent of traffic the new version is currently taking."
+        stepStartedAt:
+          type: string
+        message:
+          type: string

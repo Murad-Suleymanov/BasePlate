@@ -89,6 +89,69 @@ func (in *BirServiceSpec) DeepCopyInto(out *BirServiceSpec) {
 		*out = new(RouteSpec)
 		(*in).DeepCopyInto(*out)
 	}
+	// Canary was missing here: *out = *in only copies the POINTER, so a "deep" copy
+	// shared one CanarySpec with the original. controller-runtime hands every
+	// reconcile a DeepCopy precisely so the informer cache cannot be mutated from
+	// under it, and a shared pointer defeats that.
+	if in.Canary != nil {
+		in, out := &in.Canary, &out.Canary
+		*out = new(CanarySpec)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.Rollout != nil {
+		in, out := &in.Rollout, &out.Rollout
+		*out = new(RolloutSpec)
+		(*in).DeepCopyInto(*out)
+	}
+}
+
+func (in *CanarySpec) DeepCopyInto(out *CanarySpec) {
+	*out = *in
+	if in.Weight != nil {
+		in, out := &in.Weight, &out.Weight
+		*out = new(int32)
+		**out = **in
+	}
+}
+
+func (in *CanarySpec) DeepCopy() *CanarySpec {
+	if in == nil {
+		return nil
+	}
+	out := new(CanarySpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *RolloutSpec) DeepCopyInto(out *RolloutSpec) {
+	*out = *in
+	if in.Steps != nil {
+		in, out := &in.Steps, &out.Steps
+		*out = make([]int32, len(*in))
+		copy(*out, *in)
+	}
+}
+
+func (in *RolloutSpec) DeepCopy() *RolloutSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(RolloutSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *RolloutStatus) DeepCopyInto(out *RolloutStatus) {
+	*out = *in
+}
+
+func (in *RolloutStatus) DeepCopy() *RolloutStatus {
+	if in == nil {
+		return nil
+	}
+	out := new(RolloutStatus)
+	in.DeepCopyInto(out)
+	return out
 }
 
 func (in *RouteSpec) DeepCopyInto(out *RouteSpec) {
@@ -368,6 +431,11 @@ func (in *BirServiceSpec) DeepCopy() *BirServiceSpec {
 
 func (in *BirServiceStatus) DeepCopyInto(out *BirServiceStatus) {
 	*out = *in
+	if in.Rollout != nil {
+		in, out := &in.Rollout, &out.Rollout
+		*out = new(RolloutStatus)
+		(*in).DeepCopyInto(*out)
+	}
 }
 
 func (in *BirServiceStatus) DeepCopy() *BirServiceStatus {

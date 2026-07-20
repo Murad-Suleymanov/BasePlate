@@ -43,7 +43,7 @@ func pathValue(t *testing.T, rule map[string]interface{}) string {
 
 // Standalone service: single rule, no explicit match, just its own backend.
 func TestBuildHTTPRouteRules_Standalone(t *testing.T) {
-	rules := buildHTTPRouteRules("app-svc", 8080, "", 0, "", nil)
+	rules := buildHTTPRouteRules("app-svc", 8080, routeSplit{}, "", nil)
 	if len(rules) != 1 {
 		t.Fatalf("want 1 rule, got %d", len(rules))
 	}
@@ -64,7 +64,7 @@ func TestBuildHTTPRouteRules_WeightedPool(t *testing.T) {
 		{Name: "app-main", Weight: 95},
 		{Name: "app-testing", Weight: 5},
 	}
-	rules := buildHTTPRouteRules("app-main-svc", 8080, "", 0, "", backends)
+	rules := buildHTTPRouteRules("app-main-svc", 8080, routeSplit{}, "", backends)
 	if len(rules) != 1 {
 		t.Fatalf("want 1 rule, got %d", len(rules))
 	}
@@ -85,7 +85,7 @@ func TestBuildHTTPRouteRules_WeightedPool(t *testing.T) {
 // remaining members keep serving in their declared proportions instead of 5xx-ing its share.
 func TestBuildHTTPRouteRules_WeightedPoolPartial(t *testing.T) {
 	backends := []deployv1alpha1.RouteBackend{{Name: "app-main", Weight: 95}}
-	rule := asMap(t, buildHTTPRouteRules("app-main-svc", 8080, "", 0, "", backends)[0])
+	rule := asMap(t, buildHTTPRouteRules("app-main-svc", 8080, routeSplit{}, "", backends)[0])
 	if got := backendNames(t, rule); len(got) != 1 || got[0] != "app-main-inst-svc" {
 		t.Errorf("want only [app-main-inst-svc], got %v", got)
 	}
@@ -98,7 +98,7 @@ func TestBuildHTTPRouteRules_WeightsBeatCanary(t *testing.T) {
 		{Name: "app-main", Weight: 95},
 		{Name: "app-testing", Weight: 5},
 	}
-	rule := asMap(t, buildHTTPRouteRules("app-main-svc", 8080, "app-main-canary-svc", 10, "", backends)[0])
+	rule := asMap(t, buildHTTPRouteRules("app-main-svc", 8080, routeSplit{canarySvc: "app-main-canary-svc", canaryWeight: 10}, "", backends)[0])
 	for _, name := range backendNames(t, rule) {
 		if name == "app-main-canary-svc" {
 			t.Errorf("canary backend leaked into a weighted pool: %v", backendNames(t, rule))
@@ -108,7 +108,7 @@ func TestBuildHTTPRouteRules_WeightsBeatCanary(t *testing.T) {
 
 // Canary still produces a single weighted rule (no regression).
 func TestBuildHTTPRouteRules_Canary(t *testing.T) {
-	rules := buildHTTPRouteRules("app-svc", 8080, "app-canary-svc", 10, "", nil)
+	rules := buildHTTPRouteRules("app-svc", 8080, routeSplit{canarySvc: "app-canary-svc", canaryWeight: 10}, "", nil)
 	if len(rules) != 1 {
 		t.Fatalf("want 1 rule, got %d", len(rules))
 	}
@@ -124,7 +124,7 @@ func TestBuildHTTPRouteRules_Canary(t *testing.T) {
 
 // A route timeout is emitted as the Gateway API per-request timeout on the rule.
 func TestBuildHTTPRouteRules_Timeout(t *testing.T) {
-	rules := buildHTTPRouteRules("app-svc", 8080, "", 0, "15s", nil)
+	rules := buildHTTPRouteRules("app-svc", 8080, routeSplit{}, "15s", nil)
 	if len(rules) != 1 {
 		t.Fatalf("want 1 rule, got %d", len(rules))
 	}
@@ -138,8 +138,83 @@ func TestBuildHTTPRouteRules_Timeout(t *testing.T) {
 	}
 
 	// No timeout → no timeouts block.
-	plain := asMap(t, buildHTTPRouteRules("app-svc", 8080, "", 0, "", nil)[0])
+	plain := asMap(t, buildHTTPRouteRules("app-svc", 8080, routeSplit{}, "", nil)[0])
 	if _, has := plain["timeouts"]; has {
 		t.Errorf("no timeout should omit the timeouts block, got %#v", plain["timeouts"])
+	}
+}
+
+// A ramp on a pool member NESTS inside the pool split instead of replacing it. This
+// is the case the hello-csharp catalog produces: main at 95, testing at 5, main
+// ramping a new revision. Before this, the pool branch won outright and the ramp's
+// backend never appeared in the route at all — the next-revision pods were created,
+// received no traffic, produced no SLO signal, and the ramp stalled forever.
+func TestBuildHTTPRouteRules_RampNestsInPoolWeights(t *testing.T) {
+	backends := []deployv1alpha1.RouteBackend{
+		{Name: "app-main", Weight: 95},
+		{Name: "app-testing", Weight: 5},
+	}
+	split := routeSplit{nextSvc: "app-main-next-svc", nextWeight: 5}
+	rule := asMap(t, buildHTTPRouteRules("app-main-inst-svc", 8080, split, "", backends)[0])
+
+	got := backendNames(t, rule)
+	want := []string{"app-main-inst-svc", "app-main-next-svc", "app-testing-inst-svc"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("backends = %v, want %v", got, want)
+	}
+
+	refs := rule["backendRefs"].([]interface{})
+	// main's own 95 subdivides 95/5; testing's 5 is untouched. Scaled by 100 so the
+	// subdivision stays integral.
+	for i, want := range []int64{9025, 475, 500} {
+		if w := asMap(t, refs[i])["weight"].(int64); w != want {
+			t.Errorf("backend %d weight = %d, want %d", i, w, want)
+		}
+	}
+
+	// The proportions are what actually matter: main keeps 95% of the pool, of which
+	// 5% is on the new revision, and testing still holds exactly 5%.
+	var total int64
+	for _, r := range refs {
+		total += asMap(t, r)["weight"].(int64)
+	}
+	if total != 10000 {
+		t.Fatalf("weights total %d, want 10000", total)
+	}
+	if pct := float64(500) / float64(total) * 100; pct != 5 {
+		t.Errorf("testing share = %.2f%%, want it unchanged at 5%%", pct)
+	}
+}
+
+// A non-ramping pool must emit exactly the weights it always did. Scaling them
+// unconditionally would rewrite every HTTPRoute in the cluster for no gain.
+func TestBuildHTTPRouteRules_IdlePoolWeightsAreUnscaled(t *testing.T) {
+	backends := []deployv1alpha1.RouteBackend{
+		{Name: "app-main", Weight: 95},
+		{Name: "app-testing", Weight: 5},
+	}
+	rule := asMap(t, buildHTTPRouteRules("app-main-inst-svc", 8080, routeSplit{}, "", backends)[0])
+	refs := rule["backendRefs"].([]interface{})
+	if w := asMap(t, refs[0])["weight"].(int64); w != 95 {
+		t.Errorf("main weight = %d, want an unscaled 95", w)
+	}
+	if w := asMap(t, refs[1])["weight"].(int64); w != 5 {
+		t.Errorf("testing weight = %d, want an unscaled 5", w)
+	}
+}
+
+// A ramp on a standalone service splits the instance against its next revision.
+func TestBuildHTTPRouteRules_RampStandalone(t *testing.T) {
+	split := routeSplit{nextSvc: "app-next-svc", nextWeight: 25}
+	rule := asMap(t, buildHTTPRouteRules("app-svc", 8080, split, "", nil)[0])
+	if got, want := backendNames(t, rule), []string{"app-svc", "app-next-svc"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("backends = %v, want %v", got, want)
+	}
+	refs := rule["backendRefs"].([]interface{})
+	if w := asMap(t, refs[0])["weight"].(int64); w != 75 {
+		t.Errorf("instance weight = %d, want 75", w)
+	}
+	if w := asMap(t, refs[1])["weight"].(int64); w != 25 {
+		t.Errorf("next weight = %d, want 25", w)
 	}
 }

@@ -144,9 +144,21 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		bs.Status.StableTag = ""
 	}
 
-	// When canary is active, stable deployment must stay on the locked StableTag,
-	// not on the latest build image that the pipeline just pushed.
-	if bs.Spec.Canary != nil && bs.Spec.Canary.Enabled && bs.Status.StableTag != "" {
+	// Decide the progressive ramp BEFORE the Deployment is written, because that
+	// decision is what pins this instance's image for this reconcile: while a new
+	// version is on trial beside it, the instance must hold still.
+	// The tag comes from the resolved image, so this works whether the version
+	// arrived from a pipeline build or from a plain spec.image bump.
+	holdsImage, err := r.planProgressiveRollout(ctx, req, bs, tagFromImage(image))
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// The instance stays on the locked StableTag rather than following the build the
+	// pipeline just pushed, whenever something else owns the version choice: a manual
+	// canary, a ramp in flight, or a ramp that ABORTED — a condemned tag has to keep
+	// being condemned until a fix arrives.
+	if bs.Status.StableTag != "" && ((bs.Spec.Canary != nil && bs.Spec.Canary.Enabled) || holdsImage) {
 		image = fmt.Sprintf("%s/%s:%s", r.effectiveRegistryURL(), appName(bs), bs.Status.StableTag)
 	}
 
@@ -157,9 +169,16 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 
 	// Auto-rollback: if the desired tag was previously quarantined for crash-looping,
 	// keep serving the last healthy tag instead. State lives on the Deployment
-	// annotations (operator-owned). Disabled while canary is active — canary drives
-	// its own image lifecycle. effectiveTag is what actually gets deployed.
-	autoRollback := bs.Spec.Canary == nil || !bs.Spec.Canary.Enabled
+	// annotations (operator-owned). Disabled while a parallel version drives its own
+	// image lifecycle: a manual canary, or a progressive ramp — the ramp is already
+	// judging this tag, and two mechanisms quarantining it from different evidence
+	// would fight over the instance's image. effectiveTag is what actually gets
+	// deployed.
+	// Note this is NOT the same condition as the image pin above. An aborted ramp keeps
+	// the image pinned, but it no longer owns the rollback decision: its temporary
+	// Deployment is gone and the instance is just running its known-good version, so
+	// it gets the same crash-loop protection as any other steady-state service.
+	autoRollback := (bs.Spec.Canary == nil || !bs.Spec.Canary.Enabled) && !progressiveOwnsRollbackDecision(bs)
 	desiredTag := tagFromImage(image)
 	healthyTag := preExist.Annotations[annotHealthyTag]
 	rolledBackTag := preExist.Annotations[annotRolledBackTag]
@@ -254,39 +273,10 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 			// In ambient mode the use-waypoint label must be on the pod, not just the service:
 			// the ingress gateway resolves Endpoints and connects to pod IPs, which bypasses
 			// the service-VIP waypoint binding. Pod-level label routes pod-IP traffic via waypoint too.
-			templateLabels := mergeStringMap(map[string]string{}, labels)
-			// build-tag on the pod (template-only, off the immutable selector) lets the
-			// auto-rollback check select this version's pods and watch them for crashes.
-			if effectiveTag != "" {
-				templateLabels[labelBuildTag] = effectiveTag
-			}
-			// route-group: pods join their pool here (Deployment selector stays
-			// app.kubernetes.io/name — immutable — so this is pod-template only).
-			// The pool's Service selects this label, spanning every member's pods.
-			templateLabels[labelRouteGroup] = routeGroup(bs)
-			// Istio canonical service: app.kubernetes.io/name (the immutable selector)
-			// is the per-instance name, so without this every pool instance reports as
-			// a separate canonical service and pool traffic is mis-attributed (shows as
-			// unknown in mesh dashboards). Pin the canonical name to the app so main +
-			// testing report under one app; destination_workload still distinguishes
-			// each instance. Standalone apps already equal their app name (no-op).
-			templateLabels[labelCanonicalName] = appName(bs)
-			// Canonical revision = the deployed build tag, so Istio stamps
-			// destination_canonical_revision on every request metric and the SLO gate can
-			// attribute errors to ONE version. It must be the build tag, not a constant:
-			// maxUnavailable:0 keeps the old version serving while the new one rolls out,
-			// so both are in the metric stream at once and a constant revision would blend
-			// them — a bad new version would hide behind the healthy old one's traffic.
-			// Falls back to "latest" for untagged images (nothing to attribute).
-			if effectiveTag != "" {
-				templateLabels[labelCanonicalRevision] = effectiveTag
-			} else {
-				templateLabels[labelCanonicalRevision] = "latest"
-			}
-			if bsNeedsWaypoint(bs) {
-				templateLabels[labelUseWaypoint] = waypointName
-			}
-			dep.Spec.Template.ObjectMeta.Labels = templateLabels
+			// Shared with the next-revision Deployment a progressive rollout runs beside
+			// this one — see pod_template.go for why that sharing is load-bearing.
+			// joinPool: the main Deployment's pods ARE the pool.
+			dep.Spec.Template.ObjectMeta.Labels = revisionPodLabels(bs, labels, effectiveTag, true)
 			dep.Spec.Template.ObjectMeta.Annotations = r.tracingAnnotations(ctx, bs, dep.Spec.Template.ObjectMeta.Annotations)
 
 			// If the image lives in our internal registry, mount the registry-push secret so pods can pull it.
@@ -327,74 +317,9 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 			gracePeriod := int64(preStopSleep) + int64(drainBuffer)
 			templateSpec.TerminationGracePeriodSeconds = &gracePeriod
 
-			container := corev1.Container{
-				Name:            "app",
-				Image:           image,
-				ImagePullPolicy: corev1.PullAlways,
-				Ports: []corev1.ContainerPort{
-					{ContainerPort: containerPort},
-				},
-				Resources: resourceReqs,
-				Lifecycle: &corev1.Lifecycle{
-					PreStop: &corev1.LifecycleHandler{
-						Exec: &corev1.ExecAction{
-							Command: []string{"/bin/sh", "-c", fmt.Sprintf("sleep %d", preStopSleep)},
-						},
-					},
-				},
-				Env: tracingContainerEnv(bs, dep.Spec.Template.ObjectMeta.Annotations),
+			templateSpec.Containers = []corev1.Container{
+				appContainer(bs, image, containerPort, resourceReqs, dep.Spec.Template.ObjectMeta.Annotations),
 			}
-
-			if bs.Spec.ReadinessProbe != nil {
-				probePort := containerPort
-				if bs.Spec.ReadinessProbe.Port != nil {
-					probePort = *bs.Spec.ReadinessProbe.Port
-				}
-				container.ReadinessProbe = &corev1.Probe{
-					ProbeHandler: corev1.ProbeHandler{
-						HTTPGet: &corev1.HTTPGetAction{
-							Path: bs.Spec.ReadinessProbe.Path,
-							Port: intstr.FromInt(int(probePort)),
-						},
-					},
-					InitialDelaySeconds: 5,
-					PeriodSeconds:       5,
-					FailureThreshold:    3,
-				}
-			} else {
-				// Default TCP readiness probe — guarantees zero-downtime rolling updates
-				// even when users forget to declare an HTTP probe. Without this, K8s marks
-				// pods Ready as soon as the container is Running, causing premature old-pod
-				// termination while the new app is still initializing.
-				container.ReadinessProbe = &corev1.Probe{
-					ProbeHandler: corev1.ProbeHandler{
-						TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt(int(containerPort))},
-					},
-					InitialDelaySeconds: 3,
-					PeriodSeconds:       5,
-					FailureThreshold:    3,
-				}
-			}
-
-			if bs.Spec.LivenessProbe != nil {
-				probePort := containerPort
-				if bs.Spec.LivenessProbe.Port != nil {
-					probePort = *bs.Spec.LivenessProbe.Port
-				}
-				container.LivenessProbe = &corev1.Probe{
-					ProbeHandler: corev1.ProbeHandler{
-						HTTPGet: &corev1.HTTPGetAction{
-							Path: bs.Spec.LivenessProbe.Path,
-							Port: intstr.FromInt(int(probePort)),
-						},
-					},
-					InitialDelaySeconds: 15,
-					PeriodSeconds:       10,
-					FailureThreshold:    3,
-				}
-			}
-
-			templateSpec.Containers = []corev1.Container{container}
 
 			// Node pool: pin to the pool's nodes and tolerate its taints. Assigned
 			// (not appended) so clearing spec.nodePool reverts to default scheduling.
@@ -465,6 +390,31 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
+	// Progressive ramp: keep the temporary next-revision pair in step with the ramp
+	// state and advance the step machine. Returns ("", 0) whenever no ramp is in
+	// flight — the default immediate path — leaving the route exactly as it was.
+	fallbackReplicas := int32(1)
+	if replicas != nil {
+		fallbackReplicas = *replicas
+	} else if minReplicas != nil {
+		fallbackReplicas = *minReplicas
+	}
+	nextSvcName, nextWeight, rolloutRequeue, err := r.reconcileNextRevision(
+		ctx, req, bs, port, containerPort, resourceReqs, nodeSelector, tolerations, fallbackReplicas)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Both are carried through; at most one is ever set, because an enabled canary
+	// makes the automatic ramp stand down. They stay distinct because they compose
+	// with pool weights differently — see routeSplit.
+	split := routeSplit{
+		canarySvc:    cSvcName,
+		canaryWeight: cWeight,
+		nextSvc:      nextSvcName,
+		nextWeight:   nextWeight,
+	}
+
 	// A weighted pool's route names every member's Service, but each member reconciles on
 	// its own clock and a newly added one may not have created its Service yet. Pointing a
 	// backendRef at a Service that isn't there 5xx's that member's whole share, so drop it
@@ -475,7 +425,7 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
-	if err := r.reconcileHTTPRoute(ctx, bs, svcName, port, cSvcName, cWeight, backends); err != nil {
+	if err := r.reconcileHTTPRoute(ctx, bs, svcName, port, split, backends); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -533,6 +483,13 @@ func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl
 		if requeue > 0 {
 			return ctrl.Result{RequeueAfter: requeue}, nil
 		}
+	}
+
+	// A ramp advances on wall-clock soak, not on cluster events, so it has to ask to
+	// be looked at again — otherwise a step that is merely waiting would sit until
+	// something unrelated happened to trigger a reconcile.
+	if rolloutRequeue > 0 {
+		return ctrl.Result{RequeueAfter: rolloutRequeue}, nil
 	}
 
 	return ctrl.Result{}, nil
@@ -2213,6 +2170,18 @@ func podsAverageMetric(metricName string, target int32) autoscalingv2.MetricSpec
 	}
 }
 
+// routeSplit is the in-progress traffic split layered onto a route's normal backends.
+// At most one of the two is ever set: an explicitly enabled canary makes the automatic
+// ramp stand down (see planProgressiveRollout). They are separate fields rather than
+// one pair because they compose with pool weights differently — the ramp nests inside
+// a member's share, the manual canary does not.
+type routeSplit struct {
+	canarySvc    string
+	canaryWeight int32
+	nextSvc      string
+	nextWeight   int32
+}
+
 // buildHTTPRouteRules constructs the single catch-all rule for a pool's HTTPRoute. The
 // backends take one of three shapes, in order of precedence:
 //
@@ -2225,33 +2194,64 @@ func podsAverageMetric(metricName string, target int32) autoscalingv2.MetricSpec
 //
 // Weights are relative, not absolute, so a short backends list still adds up: if a
 // member's Service is missing the caller leaves it out and the rest split its share.
-func buildHTTPRouteRules(svcName string, svcPort int32, canarySvcName string, canaryWeight int32, timeout string, backends []deployv1alpha1.RouteBackend) []interface{} {
+func buildHTTPRouteRules(svcName string, svcPort int32, split routeSplit, timeout string, backends []deployv1alpha1.RouteBackend) []interface{} {
+	ref := func(name string, weight int64) interface{} {
+		return map[string]interface{}{"name": name, "port": int64(svcPort), "weight": weight}
+	}
+
 	var catchAllBackends []interface{}
 	switch {
 	case len(backends) > 0:
-		for _, b := range backends {
-			catchAllBackends = append(catchAllBackends, map[string]interface{}{
-				"name":   backendServiceName(b.Name),
-				"port":   int64(svcPort),
-				"weight": int64(b.Weight),
-			})
+		// A weighted pool. A progressive ramp does NOT replace this split, it nests
+		// inside it: the ramping member's own share is subdivided between its current
+		// and next revision, and every other member keeps its share untouched.
+		//
+		// During a ramp every weight is scaled by 100 so the subdivision stays in
+		// integers (95 split at 5% becomes 9025 + 475, not 90.25 + 4.75). Gateway API
+		// weights are relative — a backendRef receives weight/(sum of weights) — so
+		// scaling the whole set leaves the resulting proportions untouched.
+		//
+		// The scale is applied ONLY while a ramp is in flight. Applying it always
+		// would rewrite the weights on every weighted pool in the cluster for no
+		// behavioural gain, turning a readable 95/5 into 9500/500 permanently.
+		//
+		// Only the primary ramps (see resolveRollout), and the primary is the member
+		// that owns this route, so the ramping member is the one whose Service is this
+		// route's own svcName. That is why no cross-member lookup is needed here.
+		ramping := split.nextSvc != "" && split.nextWeight > 0
+		scale := int64(1)
+		if ramping {
+			scale = 100
 		}
-	case canarySvcName != "" && canaryWeight > 0:
-		stableWeight := int64(100 - canaryWeight)
+		for _, b := range backends {
+			memberSvc := backendServiceName(b.Name)
+			if ramping && memberSvc == svcName {
+				catchAllBackends = append(catchAllBackends,
+					ref(memberSvc, int64(b.Weight)*int64(100-split.nextWeight)),
+					ref(split.nextSvc, int64(b.Weight)*int64(split.nextWeight)))
+				continue
+			}
+			catchAllBackends = append(catchAllBackends, ref(memberSvc, int64(b.Weight)*scale))
+		}
+	case split.canarySvc != "" && split.canaryWeight > 0:
+		// A manual canary, on a service with no pool weights. Unlike the ramp above
+		// this one does not compose with pool weights — a human driving spec.canary on
+		// a weighted pool would be fighting the pool's own split, so the pool wins
+		// (the branch order is the decision).
+		stableWeight := int64(100 - split.canaryWeight)
 		if stableWeight < 0 {
 			stableWeight = 0
 		}
 		catchAllBackends = []interface{}{
-			map[string]interface{}{
-				"name":   svcName,
-				"port":   int64(svcPort),
-				"weight": stableWeight,
-			},
-			map[string]interface{}{
-				"name":   canarySvcName,
-				"port":   int64(svcPort),
-				"weight": int64(canaryWeight),
-			},
+			ref(svcName, stableWeight),
+			ref(split.canarySvc, int64(split.canaryWeight)),
+		}
+	case split.nextSvc != "" && split.nextWeight > 0:
+		// A progressive ramp on a standalone service: no pool weights to nest inside,
+		// so the split is between the instance and its next revision directly.
+		catchAllBackends = []interface{}{
+			ref(svcName, int64(100-split.nextWeight)),
+			ref(split.nextSvc, int64(split.nextWeight)),
 		}
 	default:
 		catchAllBackends = []interface{}{
@@ -2269,7 +2269,7 @@ func buildHTTPRouteRules(svcName string, svcPort int32, canarySvcName string, ca
 	return []interface{}{rule}
 }
 
-func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deployv1alpha1.BirService, svcName string, svcPort int32, canarySvcName string, canaryWeight int32, backends []deployv1alpha1.RouteBackend) error {
+func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deployv1alpha1.BirService, svcName string, svcPort int32, split routeSplit, backends []deployv1alpha1.RouteBackend) error {
 	// Build the desired set of HTTPRoutes (one per route entry). Only the pool's
 	// primary owns routes; non-primary members and unexposed services own none.
 	desired := map[string]map[string]interface{}{}
@@ -2305,7 +2305,7 @@ func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deplo
 					map[string]interface{}{"name": gatewayName, "namespace": gatewayNamespace, "sectionName": "https"},
 				},
 				"hostnames": toInterfaceSlice(hostnames),
-				"rules":     buildHTTPRouteRules(svcName, svcPort, canarySvcName, canaryWeight, e.Timeout, backends),
+				"rules":     buildHTTPRouteRules(svcName, svcPort, split, e.Timeout, backends),
 			}
 		}
 	}
@@ -2329,7 +2329,7 @@ func (r *BirServiceReconciler) reconcileHTTPRoute(ctx context.Context, bs *deplo
 					"name":  poolServiceName(bs),
 				},
 			},
-			"rules": buildHTTPRouteRules(svcName, svcPort, canarySvcName, canaryWeight, "", backends),
+			"rules": buildHTTPRouteRules(svcName, svcPort, split, "", backends),
 		}
 	}
 

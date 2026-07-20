@@ -82,8 +82,8 @@ func buildTrafficPolicy(bs *deployv1alpha1.BirService) map[string]interface{} {
 	if bs.Spec.Traffic.EjectUnhealthy == nil || *bs.Spec.Traffic.EjectUnhealthy {
 		policy["outlierDetection"] = map[string]interface{}{
 			// Statistical success-rate ejection (RPS-adaptive).
-			"successRateMinimumHosts":  int64(2),   // need ≥2 pods to each meet the volume threshold
-			"successRateRequestVolume": int64(50),  // need ≥50 req/interval per pod (~1.7 req/s at 30s)
+			"successRateMinimumHosts":  int64(2),    // need ≥2 pods to each meet the volume threshold
+			"successRateRequestVolume": int64(50),   // need ≥50 req/interval per pod (~1.7 req/s at 30s)
 			"successRateStdevFactor":   int64(1900), // 1.9σ below mean (Envoy default)
 			// Hard-failure backstop: pod is unreachable or overloaded (502/503/504).
 			"consecutiveGatewayErrors": int64(3),

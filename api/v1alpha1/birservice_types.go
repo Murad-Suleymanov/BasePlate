@@ -78,7 +78,15 @@ type BirServiceSpec struct {
 
 	// Canary enables a parallel canary deployment with weighted HTTPRoute traffic splitting.
 	// Set enabled: false or remove this field to tear down the canary infra.
+	//
+	// This is the MANUAL knob: the developer picks the weight and promotes by hand.
+	// spec.rollout is the automatic one. An explicitly enabled canary wins — the ramp
+	// stands down rather than two mechanisms bidding for the same HTTPRoute weight.
 	Canary *CanarySpec `json:"canary,omitempty"`
+
+	// Rollout configures progressive traffic shifting for new images. Omitted means
+	// immediate — one rolling update, no second Deployment, today's behaviour.
+	Rollout *RolloutSpec `json:"rollout,omitempty"`
 
 	// ReadinessProbe configures the HTTP readiness probe. Port defaults to the container port.
 	// Operator applies default timings (initialDelay=5s, period=5s, failureThreshold=3).
@@ -356,6 +364,102 @@ type CanarySpec struct {
 	Tag string `json:"tag,omitempty"`
 }
 
+// RolloutSpec configures how a NEW image takes traffic.
+//
+// Omitted entirely — the default — means immediate: one rolling update, traffic
+// follows pod count as pods swap, and nothing watches the new version until it has
+// already taken everything. That is the historical behaviour and it stays the
+// default deliberately, because progressive costs extra pods and extra minutes and
+// most deploys do not need either.
+//
+// strategy: progressive brings the new tag up as a SECOND, temporary Deployment
+// that carries NO traffic until it is Ready, then shifts traffic onto it in the
+// declared weight steps, judging the SLO between them. The main Deployment is not
+// touched for the whole ramp — which is what makes an abort instant: dropping the
+// weight to 0 is one route edit, not a pod operation, so there is no rollout to
+// wait out and no capacity dip while the bad version drains.
+type RolloutSpec struct {
+	// Strategy selects how traffic reaches a new version.
+	//   immediate (default) — one rolling update; no second Deployment is created.
+	//   progressive         — stepped weight onto a parallel next-revision Deployment.
+	//
+	// In a pool, only the PRIMARY member ramps; the others deploy normally. A
+	// non-primary member owns no HTTPRoute, so it has no way to shift traffic onto a
+	// new revision. Since a catalog usually hands one config to every member via a
+	// YAML anchor, this block is safe to set on the whole pool — it takes effect on
+	// the member that can act on it and is ignored by the rest.
+	//
+	// A ramp on a pool member nests inside the pool split rather than replacing it:
+	// with main at 95 and testing at 5, main ramping at 5% serves 90.25% on its
+	// current revision and 4.75% on the new one, while testing keeps exactly 5%.
+	Strategy string `json:"strategy,omitempty"`
+
+	// Steps are the traffic percentages the new version takes, in order, e.g.
+	// [5, 25, 50]. Values must be 1-99 and strictly increasing. The ramp always ends
+	// by promoting (moving the main Deployment to the new tag), so listing 100 is
+	// unnecessary — and is rejected, because 100 would mean the temporary Deployment
+	// alone serves the whole service on replicas sized for a fraction of it.
+	// Default [5, 25, 50].
+	//
+	// In a pool the percentage is of the MEMBER's share, not of the pool: with the
+	// member holding 95%, a 5% step puts 4.75% of pool traffic on the new revision.
+	//
+	// Steps above 50% are accepted but emit a RolloutStepsUnderProvisioned warning.
+	// Matching the instance's per-pod load needs replicas*w/(100-w) pods for the new
+	// revision, which exceeds the instance's own replica count exactly above 50% — so
+	// past that point the new revision is under-provisioned for its share, looks
+	// slower than it is, and a latency objective can abort a healthy version. Promote
+	// from 50% rather than ramping past it.
+	//
+	// Every step costs one full stepDuration, so a long list is a long deploy: seven
+	// steps at the default 4m soak is a 28-minute rollout.
+	Steps []int32 `json:"steps,omitempty"`
+
+	// StepDuration is how long a step soaks before it is judged, as a Prometheus
+	// duration (e.g. "5m").
+	//
+	// Defaults to TWICE spec.traffic.autoRollback.window (so 4m with the platform's
+	// default 2m window), floored at 2m. It is derived rather than fixed because the
+	// SLI is a TRAILING window that does not reset when the weight changes: judge a
+	// step sooner than the window reaches back, and the query still contains the
+	// previous step's traffic — the step that passed — averaging the new step's
+	// errors down exactly when they matter. Widening the window widens the soak
+	// automatically.
+	//
+	// Setting this below the window is allowed but emits a RolloutWindowDiluted
+	// warning event, because every verdict in that ramp is weakened.
+	StepDuration string `json:"stepDuration,omitempty"`
+
+	// MaxStepDuration bounds a step that cannot be judged — too little traffic, or
+	// Prometheus is unreachable. The ramp HOLDS rather than advancing (no evidence is
+	// not a pass), and once this elapses it stops and reports, leaving the decision to
+	// a human. Default "10m".
+	MaxStepDuration string `json:"maxStepDuration,omitempty"`
+
+	// Analysis selects what a breach during the ramp does. Defaults to the same
+	// monitor/enforce semantics as spec.traffic.autoRollback, and inherits that
+	// field's configuration (SLO percent, window, minRequests, latency objective)
+	// so a service describes its objective in exactly one place.
+	//   monitor (default) — evaluate and report; the ramp advances regardless.
+	//   enforce           — a breach aborts the ramp and tears the new version down.
+	//
+	// The SLO is evaluated during a ramp whether or not spec.traffic.autoRollback is
+	// configured — an unset autoRollback resolves to monitor, not to off. What
+	// decides whether there is anything to evaluate is the MESH: the signal is Istio
+	// request metrics, so a service with no spec.traffic has none.
+	//
+	// Three outcomes, and they are deliberately different:
+	//   - mesh + a verdict         → the verdict decides (report, or abort if enforce).
+	//   - mesh + no verdict yet    → the ramp HOLDS, then stops at Held for a human.
+	//                                Too little traffic is not a pass.
+	//   - no mesh (or no Prometheus wired into the operator)
+	//                              → no verdict is ever possible, so the ramp advances
+	//                                on the step duration alone. It still paces the
+	//                                rollout; it cannot catch a version that starts
+	//                                cleanly and then serves errors.
+	Analysis string `json:"analysis,omitempty"`
+}
+
 // ProbeSpec configures an HTTP liveness or readiness probe.
 // Port defaults to the container port when omitted.
 type ProbeSpec struct {
@@ -383,6 +487,49 @@ type BirServiceStatus struct {
 	StableTag   string `json:"stableTag,omitempty"`
 	// CanaryImage is the full image URL of the active canary deployment (display only).
 	CanaryImage string `json:"canaryImage,omitempty"`
+	// Rollout is the live state of a progressive ramp. Absent when no ramp is in
+	// flight (which is every service on the default immediate strategy).
+	Rollout *RolloutStatus `json:"rollout,omitempty"`
+}
+
+// A ramp that reaches Held is waiting on a judgement no timer can make. Override it
+// by hand — the annotation is consumed (acted on once, then removed), so it is safe to
+// apply during an incident without a GitOps round-trip:
+//
+//	kubectl annotate birservice <name> deploy.easydeploy.io/rollout-action=promote
+//	kubectl annotate birservice <name> deploy.easydeploy.io/rollout-action=abort
+//
+// promote skips the remaining steps and moves the instance onto the ramped tag; abort
+// drops the weight to 0 and removes the temporary revision, leaving the instance where
+// it was. Both work from any phase, not just Held.
+//
+// RolloutStatus is the durable state of one progressive ramp.
+//
+// It lives in status, not in operator memory, because the ramp outlives any single
+// reconcile: a step is a wall-clock soak, so an operator restart mid-ramp must be
+// able to pick up where it left off rather than restarting the ramp (which would
+// re-expose users to a version already under suspicion) or promoting blind.
+type RolloutStatus struct {
+	// Phase is the ramp state machine:
+	//   Progressing — the new version is taking a share of traffic, stepping up.
+	//   Promoting   — the ramp passed; the main Deployment is moving to the new tag.
+	//   Held        — a step could not be judged for longer than maxStepDuration.
+	//                 Traffic stays at the current weight and a human must decide.
+	//   RolledBack  — the ramp was aborted; the new version took 0 traffic and its
+	//                 Deployment was removed. Main never changed.
+	Phase string `json:"phase,omitempty"`
+	// Tag is the build tag being ramped. A different tag arriving mid-ramp restarts
+	// the ramp from step 0 against the new tag.
+	Tag string `json:"tag,omitempty"`
+	// Step is the index into spec.rollout.steps that is currently serving.
+	Step int32 `json:"step,omitempty"`
+	// Weight is the percentage of traffic the new version is currently taking.
+	Weight int32 `json:"weight,omitempty"`
+	// StepStartedAt is when the current step began taking traffic (RFC3339). The soak
+	// is measured from here, so it resets on every advance.
+	StepStartedAt string `json:"stepStartedAt,omitempty"`
+	// Message explains a Held or RolledBack phase in the terms a human needs.
+	Message string `json:"message,omitempty"`
 }
 
 // +kubebuilder:object:root=true
