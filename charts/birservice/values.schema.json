@@ -36,6 +36,7 @@
         "maxDown":        { "$ref": "#/properties/maxDown" },
         "shutdown":       { "$ref": "#/properties/shutdown" },
         "canary":         { "$ref": "#/properties/canary" },
+        "rollout":        { "$ref": "#/properties/rollout" },
         "injectPipeline": { "$ref": "#/properties/injectPipeline" }
       }
     }
@@ -340,6 +341,36 @@
         "weight":  { "type": "integer", "minimum": 0, "maximum": 100, "description": "Canary traffic %. Default 10." },
         "image":   { "type": "string" },
         "tag":     { "type": "string" }
+      }
+    },
+    "rollout": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How a NEW image takes traffic. Omit for immediate (default): one rolling update, no second Deployment, traffic follows pod count.",
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": ["immediate", "progressive"],
+          "description": "immediate (default) = today's behaviour. progressive = ramp traffic onto the new version in weight steps, judging the SLO between them, then promote the instance itself onto the tag. In a pool only the PRIMARY member ramps (others own no HTTPRoute and deploy normally), so this is safe to set on a whole pool via a YAML anchor."
+        },
+        "steps": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1, "maximum": 99 },
+          "description": "Traffic percentages the new version takes, in order, strictly increasing, 1-99. Default [5, 25, 50]. In a pool the percentage is of the MEMBER's share, not the pool's. 100 is invalid — the ramp ends by promoting the instance. Values above 50 warn: the new revision cannot be sized to match the instance's per-pod load past that point, so it looks slow and a latency objective may abort a healthy version. Each step costs one stepDuration."
+        },
+        "stepDuration": {
+          "type": "string",
+          "description": "How long each step soaks before it is judged (Prometheus duration, e.g. 5m). Defaults to 2x traffic.autoRollback.window (4m with the default 2m window), floored at 2m. Prefer leaving unset so it tracks the window: set below the window and each step is judged partly on the previous step's traffic (allowed, but emits RolloutWindowDiluted)."
+        },
+        "maxStepDuration": {
+          "type": "string",
+          "description": "How long a step may go unjudged (too little traffic, or Prometheus down) before the ramp stops and waits for a human instead of promoting. Default 10m."
+        },
+        "analysis": {
+          "type": "string",
+          "enum": ["monitor", "enforce"],
+          "description": "monitor = evaluate and report, the ramp continues regardless. enforce = a breach aborts the ramp and removes the new version. Defaults to traffic.autoRollback.mode, so the objective stays declared in one place."
+        }
       }
     },
     "injectPipeline": {

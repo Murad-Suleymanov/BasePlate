@@ -116,9 +116,13 @@ if [ "$base" = "service.yaml" ]; then
 fi
 
 # ─── env-file validation: detect single vs multi-instance shape ─────────────
+# Keep in sync with values.schema.json ($defs/instance) and the chart's $knownKeys.
+# This list is hand-maintained, so a field added to the schema but not here is
+# reported as a typo on a file that is actually valid.
 KNOWN_KEYS=(name owner image repo tag imageTag dockerfile port containerPort replicas
-            hpa resources hostname hostnames expose metrics traffic readinessProbe livenessProbe
-            singleton maxDown shutdown canary injectPipeline inheritFrom route routes environment)
+            hpa resources pool nodePool weight hostname hostnames expose metrics traffic
+            readinessProbe livenessProbe
+            singleton maxDown shutdown canary rollout injectPipeline inheritFrom route routes environment)
 
 is_known_key() {
   local k="$1"

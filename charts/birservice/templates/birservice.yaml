@@ -19,10 +19,10 @@
 {{- if $isMulti -}}
 {{- /* Inherited service-level fields propagate to each instance. */ -}}
 {{- $shared := dict -}}
-{{- range $k := list "image" "repo" "tag" "imageTag" "dockerfile" "pool" "nodePool" -}}
+{{- range $k := list "image" "repo" "tag" "imageTag" "dockerfile" "pool" "nodePool" "rollout" -}}
   {{- if hasKey $.Values $k -}}{{- $_ := set $shared $k (index $.Values $k) -}}{{- end -}}
 {{- end -}}
-{{- $knownKeys := list "name" "owner" "image" "repo" "tag" "imageTag" "dockerfile" "port" "containerPort" "replicas" "hpa" "resources" "pool" "nodePool" "hostname" "hostnames" "expose" "metrics" "traffic" "readinessProbe" "livenessProbe" "singleton" "maxDown" "shutdown" "canary" "injectPipeline" "route" "routes" "environment" -}}
+{{- $knownKeys := list "name" "owner" "image" "repo" "tag" "imageTag" "dockerfile" "port" "containerPort" "replicas" "hpa" "resources" "pool" "nodePool" "hostname" "hostnames" "expose" "metrics" "traffic" "readinessProbe" "livenessProbe" "singleton" "maxDown" "shutdown" "canary" "rollout" "injectPipeline" "route" "routes" "environment" -}}
 {{- /* ── Primary designation ──────────────────────────────────────────────────
        For each route name, pick the instance that owns the pool's Service + routes:
        the instance whose name equals the route name, else the first (sorted) one
