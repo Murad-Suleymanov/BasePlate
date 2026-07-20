@@ -1486,3 +1486,73 @@ func TestManualAbortCutsTrafficImmediately(t *testing.T) {
 		t.Fatalf("abort must take traffic off on the same pass; got svc=%q weight=%d", svc, weight)
 	}
 }
+
+// Regression: the ramp's image pin must survive the reconcile that follows the one
+// which set it.
+//
+// StableTag is shared with the canary feature, whose sync used to clear it on any
+// service without a canary — which is every service using a ramp. The pin was set on
+// the reconcile that started the ramp and wiped on the next one, so the instance rolled
+// onto the tag it was supposed to be holding still against: main and the temporary
+// Deployment ended up serving the SAME image, and main flapped between revisions as the
+// two mechanisms fought.
+func TestStableTagPinSurvivesNextReconcileDuringRamp(t *testing.T) {
+	ctx := context.Background()
+	r := newProgressiveClient(t, mainDepAtTag("t", "v1"))
+	bs := progressiveBS("t")
+	bs.Spec.Rollout = &deployv1alpha1.RolloutSpec{Strategy: "progressive"}
+	bs.Status.BuildTag = "v2"
+	if err := r.Create(ctx, bs); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	req := progressiveReq(bs)
+
+	// Reconcile 1: the ramp starts and pins the instance to what it runs today.
+	if _, err := r.planProgressiveRollout(ctx, req, bs, "v2"); err != nil {
+		t.Fatalf("reconcile 1: %v", err)
+	}
+	if bs.Status.StableTag != "v1" {
+		t.Fatalf("after reconcile 1 StableTag = %q, want v1", bs.Status.StableTag)
+	}
+
+	// Reconcile 2: syncStableTag runs FIRST, before the ramp is re-planned.
+	if err := r.syncStableTag(ctx, req, bs); err != nil {
+		t.Fatalf("reconcile 2 sync: %v", err)
+	}
+	if bs.Status.StableTag != "v1" {
+		t.Fatalf("StableTag was wiped mid-ramp (%q): the instance would roll onto v2, "+
+			"the very tag the ramp is trialling beside it", bs.Status.StableTag)
+	}
+
+	holds, err := r.planProgressiveRollout(ctx, req, bs, "v2")
+	if err != nil {
+		t.Fatalf("reconcile 2 plan: %v", err)
+	}
+	// Both halves of reconcileDeployment's pin condition must still hold.
+	if !holds || bs.Status.StableTag != "v1" {
+		t.Fatalf("pin lost on reconcile 2: holdsImage=%v StableTag=%q, want true/v1",
+			holds, bs.Status.StableTag)
+	}
+}
+
+// The mirror image: once the ramp reaches Promoting it WANTS the pin gone, so the
+// instance can roll onto the tag it just qualified.
+func TestStableTagPinIsReleasedForPromotion(t *testing.T) {
+	ctx := context.Background()
+	r := newProgressiveClient(t, mainDepAtTag("t", "v1"))
+	bs := progressiveBS("t")
+	bs.Spec.Rollout = &deployv1alpha1.RolloutSpec{Strategy: "progressive"}
+	bs.Status.StableTag = "v1"
+	bs.Status.Rollout = &deployv1alpha1.RolloutStatus{Phase: rolloutPhasePromoting, Tag: "v2"}
+	if err := r.Create(ctx, bs); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := r.syncStableTag(ctx, progressiveReq(bs), bs); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if bs.Status.StableTag != "" {
+		t.Fatalf("StableTag = %q during Promoting, want cleared so the instance can take the tag",
+			bs.Status.StableTag)
+	}
+}

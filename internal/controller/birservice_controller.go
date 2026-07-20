@@ -126,22 +126,46 @@ func (r *BirServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	return r.reconcileDeployment(ctx, req, &bs, image)
 }
 
-func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl.Request, bs *deployv1alpha1.BirService, image string) (ctrl.Result, error) {
-	// Sync StableTag:
-	// - Canary just enabled and StableTag not yet set → lock current BuildTag as stable.
-	// - Canary disabled and StableTag is set → promote: clear StableTag (BuildTag is now stable).
+// syncStableTag reconciles the StableTag image pin against the two mechanisms that
+// own it: a manual canary, and a progressive ramp.
+//
+//   - Canary enabled, pin not yet set → lock the current BuildTag as stable.
+//   - Nobody owns the pin any more    → clear it; BuildTag is the stable version now.
+//
+// The ramp check in the second branch is not optional. StableTag predates progressive
+// rollout and was written as canary-only state, so clearing it whenever a canary is
+// absent — the common case — wiped the ramp's pin on the very next reconcile after a
+// ramp started. Because the pin in reconcileDeployment also requires StableTag to be
+// set, the instance then rolled onto the exact tag it was supposed to be holding still
+// against; the ramp re-pinned, the next reconcile cleared it again, and the Deployment
+// flapped between two revisions while the temporary Deployment beside it served the
+// same image the instance had already taken.
+//
+// Promoting is deliberately absent from progressiveHoldsImage: that phase WANTS the pin
+// gone so the instance can move onto the ramped tag, and planProgressiveRollout clears
+// it there itself.
+func (r *BirServiceReconciler) syncStableTag(ctx context.Context, req ctrl.Request, bs *deployv1alpha1.BirService) error {
 	if bs.Spec.Canary != nil && bs.Spec.Canary.Enabled {
 		if bs.Status.StableTag == "" && bs.Status.BuildTag != "" {
 			if err := r.updateStableTag(ctx, req, bs, bs.Status.BuildTag); err != nil {
-				return ctrl.Result{}, err
+				return err
 			}
 			bs.Status.StableTag = bs.Status.BuildTag
 		}
-	} else if bs.Status.StableTag != "" {
+		return nil
+	}
+	if bs.Status.StableTag != "" && !progressiveHoldsImage(bs) {
 		if err := r.updateStableTag(ctx, req, bs, ""); err != nil {
-			return ctrl.Result{}, err
+			return err
 		}
 		bs.Status.StableTag = ""
+	}
+	return nil
+}
+
+func (r *BirServiceReconciler) reconcileDeployment(ctx context.Context, req ctrl.Request, bs *deployv1alpha1.BirService, image string) (ctrl.Result, error) {
+	if err := r.syncStableTag(ctx, req, bs); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// Decide the progressive ramp BEFORE the Deployment is written, because that
