@@ -26,8 +26,22 @@ const (
 	istioInjectDisabled = "disabled"
 	labelDataplaneMode  = "istio.io/dataplane-mode"
 	labelUseWaypoint    = "istio.io/use-waypoint"
-	dataplaneAmbient    = "ambient"
-	waypointName        = "waypoint"
+	// labelIngressUseWaypoint opts traffic that entered through an ingress Gateway
+	// into the same waypoint mesh traffic already uses. It is a separate switch
+	// because Istio deliberately exempts ingress: by default, ingress-originated
+	// traffic skips the destination waypoint even where use-waypoint is set, so
+	// the gateway's Envoy talks straight to the pod and the request never meets an
+	// L7 proxy on the destination side. That costs the waypoint's policy and,
+	// visibly, its telemetry — istio_requests_total{reporter="waypoint"} is never
+	// produced for that request, so a service reached only through the gateway
+	// shows no SLO at all.
+	//
+	// This label alone does nothing: istiod must also run with
+	// ENABLE_INGRESS_WAYPOINT_ROUTING=true, which defaults to false. See
+	// BasePlate-Infra {dev,prod}/istiod/values.
+	labelIngressUseWaypoint = "istio.io/ingress-use-waypoint"
+	dataplaneAmbient        = "ambient"
+	waypointName            = "waypoint"
 	// labelRouteGroup marks the pool a pod belongs to. The pool's Service selects
 	// this label, so instances sharing a route name are load-balanced as one pool.
 	labelRouteGroup = "deploy.easydeploy.io/route-group"

@@ -1021,14 +1021,22 @@ func (r *BirServiceReconciler) upsertNextRevisionService(
 				"deploy.easydeploy.io/revision": "next",
 			})
 			// Ambient mesh: the same waypoint binding the pool Service carries, so a
-			// weighted split applied at the waypoint reaches this backend too.
+			// weighted split applied at the waypoint reaches this backend too. Both
+			// labels, for the same reason the pool Service sets both — and here the
+			// ingress one is load-bearing rather than merely nice: a ramp is judged
+			// by the new revision's SLO, that judgement reads the waypoint's
+			// per-revision request metrics, and ingress traffic that skipped the
+			// waypoint produces none. The canary would take real traffic and be
+			// scored on an empty metric stream.
 			if bsNeedsWaypoint(bs) {
 				if svc.ObjectMeta.Labels == nil {
 					svc.ObjectMeta.Labels = map[string]string{}
 				}
 				svc.ObjectMeta.Labels[labelUseWaypoint] = waypointName
+				svc.ObjectMeta.Labels[labelIngressUseWaypoint] = "true"
 			} else {
 				delete(svc.ObjectMeta.Labels, labelUseWaypoint)
+				delete(svc.ObjectMeta.Labels, labelIngressUseWaypoint)
 			}
 			svc.Spec.Selector = selector
 			svc.Spec.Type = corev1.ServiceTypeClusterIP

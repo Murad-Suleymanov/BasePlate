@@ -1647,13 +1647,22 @@ func (r *BirServiceReconciler) reconcilePoolService(
 			// for service-VIP traffic; service-level label is the authoritative signal.
 			// Toggle symmetrically with spec.traffic so removing traffic also removes the
 			// label (mergeStringMap only adds — explicit delete is required for removal).
+			// ingress-use-waypoint is set alongside it, and is not redundant: Istio
+			// exempts ingress-originated traffic from the waypoint by default, so
+			// without it a service reached through the Gateway is served straight
+			// from the gateway's Envoy to the pod, with no waypoint on the path and
+			// therefore no reporter="waypoint" telemetry — which is what the SLO
+			// rules are built from. Requires ENABLE_INGRESS_WAYPOINT_ROUTING on
+			// istiod to have any effect.
 			if bsNeedsWaypoint(bs) {
 				if svc.ObjectMeta.Labels == nil {
 					svc.ObjectMeta.Labels = map[string]string{}
 				}
 				svc.ObjectMeta.Labels[labelUseWaypoint] = waypointName
+				svc.ObjectMeta.Labels[labelIngressUseWaypoint] = "true"
 			} else {
 				delete(svc.ObjectMeta.Labels, labelUseWaypoint)
+				delete(svc.ObjectMeta.Labels, labelIngressUseWaypoint)
 			}
 
 			svc.Spec.Selector = selector
