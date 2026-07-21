@@ -212,6 +212,47 @@ func TestEvaluateSLOPassesWithinBudget(t *testing.T) {
 	}
 }
 
+// A version that has served zero 5xx has no `response_code=~"5.."` series at all, and in
+// PromQL an empty vector divided by anything is empty rather than zero. The gate must still
+// reach a verdict on it: reading "no errors" as "cannot judge" held every clean progressive
+// rollout at its first step until it timed out into Held — the healthier the version, the
+// more certainly it was refused.
+//
+// This models Prometheus instead of canning an answer, because the bug lives in the shape of
+// the query rather than in the value it returns: the ratio query only produces a sample if it
+// defaults its own numerator to zero.
+func TestEvaluateSLOJudgesAVersionWithNoErrorSeries(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("query")
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(q, "increase"):
+			fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1700000000,"1000"]}]}}`)
+		case strings.Contains(q, "response_code") && strings.Contains(q, "or vector(0)"):
+			fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1700000000,"0"]}]}}`)
+		default:
+			// No such series — exactly what Prometheus returns for a version with a clean
+			// error record, and what the unguarded division propagates.
+			fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+		}
+	}))
+	defer srv.Close()
+
+	bs := meshBS(nil)
+	r := &BirServiceReconciler{PromURL: srv.URL}
+	v := r.evaluateSLO(context.Background(), bs, resolveAutoRollback(bs), "abc123", 10*time.Minute)
+
+	if !v.evaluated {
+		t.Fatal("a version that has served no 5xx must still be judged, not treated as unjudgeable")
+	}
+	if v.breached {
+		t.Fatalf("a clean version must not breach; verdict: %+v", v)
+	}
+	if v.errorRatio != 0 {
+		t.Errorf("errorRatio = %v, want 0", v.errorRatio)
+	}
+}
+
 // The volume guard is what protects a low-traffic service: 3 requests, 1 of which failed,
 // is a 33% error rate but nowhere near enough evidence to condemn a version.
 func TestEvaluateSLOWithTooFewRequestsIsNotJudged(t *testing.T) {

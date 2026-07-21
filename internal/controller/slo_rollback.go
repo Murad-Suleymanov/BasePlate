@@ -209,8 +209,21 @@ func (r *BirServiceReconciler) evaluateSLO(
 		return sloVerdict{}
 	}
 
+	// `or vector(0)` on the numerator, and it is load-bearing. The 5xx series does not
+	// exist at all until the version serves its first one, and in PromQL an empty vector
+	// divided by anything is empty — not zero. Without it a version with a clean error
+	// record produces no result, promScalar reports that as "no data", and the caller
+	// reads no data as "cannot judge": the healthier the version, the more certainly the
+	// gate refuses to pass it. A progressive rollout then holds at its first step and
+	// ends in Held, which is precisely backwards.
+	//
+	// Note this is NOT the 0/0 case the NaN check in promScalar covers — that one needs
+	// the numerator series to exist and be zero. Here it was never created.
+	//
+	// The denominator is safe to leave bare: the volume guard above has already matched
+	// the same selector and found traffic, so it cannot be empty on this path.
 	ratio, ok := r.promScalar(ctx, fmt.Sprintf(
-		`sum(rate(istio_requests_total{%s,response_code=~"5.."}[%s])) / sum(rate(istio_requests_total{%s}[%s]))`,
+		`(sum(rate(istio_requests_total{%s,response_code=~"5.."}[%s])) or vector(0)) / sum(rate(istio_requests_total{%s}[%s]))`,
 		sel, cfg.window, sel, cfg.window,
 	))
 	if !ok {
